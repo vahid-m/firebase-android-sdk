@@ -18,6 +18,9 @@ import static com.google.firebase.remoteconfig.RemoteConfigComponent.NETWORK_CON
 import static com.google.firebase.remoteconfig.internal.ConfigFetchHandler.DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
+import java.net.Proxy;
 
 /**
  * Wraps the settings for {@link FirebaseRemoteConfig} operations.
@@ -28,11 +31,17 @@ public class FirebaseRemoteConfigSettings {
   private final boolean enableDeveloperMode;
   private final long fetchTimeoutInSeconds;
   private final long minimumFetchInterval;
+  private final Proxy.Type proxyType;
+  private final String proxyHost;
+  private final int proxyPort;
 
   private FirebaseRemoteConfigSettings(Builder builder) {
     enableDeveloperMode = builder.enableDeveloperMode;
     fetchTimeoutInSeconds = builder.fetchTimeoutInSeconds;
     minimumFetchInterval = builder.minimumFetchInterval;
+    proxyType = builder.proxyType;
+    proxyHost = builder.proxyHost;
+    proxyPort = builder.proxyPort;
   }
 
   /**
@@ -61,6 +70,20 @@ public class FirebaseRemoteConfigSettings {
     return minimumFetchInterval;
   }
 
+  @NonNull
+  public Proxy.Type getProxyType() {
+    return proxyType;
+  }
+
+  @Nullable
+  public String getProxyHost() {
+    return proxyHost;
+  }
+
+  public int getProxyPort() {
+    return proxyPort;
+  }
+
   /** Constructs a builder initialized with the current FirebaseRemoteConfigSettings. */
   @NonNull
   public FirebaseRemoteConfigSettings.Builder toBuilder() {
@@ -77,6 +100,9 @@ public class FirebaseRemoteConfigSettings {
     // TODO(issues/257): Move constants to Constants file.
     private long fetchTimeoutInSeconds = NETWORK_CONNECTION_TIMEOUT_IN_SECONDS;
     private long minimumFetchInterval = DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS;
+    @NonNull public Proxy.Type proxyType = Proxy.Type.DIRECT;
+    @Nullable public String proxyHost;
+    public int proxyPort;
 
     /**
      * Turns the developer mode setting on or off.
@@ -131,6 +157,18 @@ public class FirebaseRemoteConfigSettings {
                 + " is an invalid argument");
       }
       minimumFetchInterval = duration;
+      return this;
+    }
+
+    /**
+     * Sets the proxy server for client calls.
+     *
+     */
+    @NonNull
+    public Builder setProxyServer(@NonNull Proxy.Type type, @NonNull String host, int port) {
+      this.proxyType = type;
+      this.proxyHost = host;
+      this.proxyPort = port;
       return this;
     }
 

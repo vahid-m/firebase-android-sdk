@@ -30,6 +30,8 @@ import androidx.annotation.WorkerThread;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigInfo;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings;
 import java.lang.annotation.Retention;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.util.Date;
 
 /**
@@ -68,6 +70,10 @@ public class ConfigMetadataClient {
   private static final String BACKOFF_END_TIME_IN_MILLIS_KEY = "backoff_end_time_in_millis";
   private static final String NUM_FAILED_FETCHES_KEY = "num_failed_fetches";
 
+  private static final String PROXY_TYPE_KEY = "proxy_type_ordinal";
+  private static final String PROXY_HOST_KEY = "proxy_host";
+  private static final String PROXY_PORT_KEY = "proxy_port";
+
   private final SharedPreferences frcMetadata;
 
   private final Object frcInfoLock;
@@ -90,6 +96,20 @@ public class ConfigMetadataClient {
   public long getMinimumFetchIntervalInSeconds() {
     return frcMetadata.getLong(
         MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY, DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS);
+  }
+
+  @Nullable
+  public Proxy getProxyServer() {
+    int proxyType = frcMetadata.getInt(PROXY_TYPE_KEY, Proxy.Type.DIRECT.ordinal());
+    if (proxyType == Proxy.Type.DIRECT.ordinal()) {
+      return null;
+    }
+
+    InetSocketAddress sa = new InetSocketAddress(
+            frcMetadata.getString(PROXY_HOST_KEY, ""),
+            frcMetadata.getInt(PROXY_PORT_KEY, 0));
+
+    return new Proxy(Proxy.Type.values()[proxyType], sa);
   }
 
   @LastFetchStatus
@@ -119,17 +139,23 @@ public class ConfigMetadataClient {
       int lastFetchStatus =
           frcMetadata.getInt(LAST_FETCH_STATUS_KEY, LAST_FETCH_STATUS_NO_FETCH_YET);
 
-      FirebaseRemoteConfigSettings settings =
-          new FirebaseRemoteConfigSettings.Builder()
+      FirebaseRemoteConfigSettings.Builder builder = new FirebaseRemoteConfigSettings.Builder()
               .setDeveloperModeEnabled(frcMetadata.getBoolean(DEVELOPER_MODE_KEY, false))
-              .setFetchTimeoutInSeconds(
-                  frcMetadata.getLong(
-                      FETCH_TIMEOUT_IN_SECONDS_KEY, NETWORK_CONNECTION_TIMEOUT_IN_SECONDS))
-              .setMinimumFetchIntervalInSeconds(
-                  frcMetadata.getLong(
-                      MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY,
-                      DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS))
-              .build();
+              .setFetchTimeoutInSeconds(frcMetadata.getLong(
+                              FETCH_TIMEOUT_IN_SECONDS_KEY, NETWORK_CONNECTION_TIMEOUT_IN_SECONDS))
+              .setMinimumFetchIntervalInSeconds(frcMetadata.getLong(
+                              MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY,
+                              DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS));
+
+      int proxyType = frcMetadata.getInt(PROXY_TYPE_KEY, Proxy.Type.DIRECT.ordinal());
+      if (proxyType != Proxy.Type.DIRECT.ordinal()) {
+        builder.setProxyServer(
+                Proxy.Type.values()[proxyType],
+                frcMetadata.getString(PROXY_HOST_KEY,""),
+                frcMetadata.getInt(PROXY_PORT_KEY, 0));
+      }
+
+      FirebaseRemoteConfigSettings settings = builder.build();
 
       return FirebaseRemoteConfigInfoImpl.newBuilder()
           .withLastFetchStatus(lastFetchStatus)
@@ -160,13 +186,7 @@ public class ConfigMetadataClient {
   @WorkerThread
   public void setConfigSettings(FirebaseRemoteConfigSettings settings) {
     synchronized (frcInfoLock) {
-      frcMetadata
-          .edit()
-          .putBoolean(DEVELOPER_MODE_KEY, settings.isDeveloperModeEnabled())
-          .putLong(FETCH_TIMEOUT_IN_SECONDS_KEY, settings.getFetchTimeoutInSeconds())
-          .putLong(
-              MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY, settings.getMinimumFetchIntervalInSeconds())
-          .commit();
+      setConfigSettingsEdit(settings).commit();
     }
   }
 
@@ -178,14 +198,23 @@ public class ConfigMetadataClient {
    */
   public void setConfigSettingsWithoutWaitingOnDiskWrite(FirebaseRemoteConfigSettings settings) {
     synchronized (frcInfoLock) {
-      frcMetadata
-          .edit()
-          .putBoolean(DEVELOPER_MODE_KEY, settings.isDeveloperModeEnabled())
-          .putLong(FETCH_TIMEOUT_IN_SECONDS_KEY, settings.getFetchTimeoutInSeconds())
-          .putLong(
-              MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY, settings.getMinimumFetchIntervalInSeconds())
-          .apply();
+      setConfigSettingsEdit(settings).apply();
     }
+  }
+
+  private SharedPreferences.Editor setConfigSettingsEdit(FirebaseRemoteConfigSettings settings) {
+    SharedPreferences.Editor edit = frcMetadata.edit();
+    edit.putBoolean(DEVELOPER_MODE_KEY, settings.isDeveloperModeEnabled())
+            .putLong(FETCH_TIMEOUT_IN_SECONDS_KEY, settings.getFetchTimeoutInSeconds())
+            .putLong(
+                    MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY, settings.getMinimumFetchIntervalInSeconds());
+
+    if (settings.getProxyType() != Proxy.Type.DIRECT) {
+      edit.putInt(PROXY_TYPE_KEY, settings.getProxyType().ordinal())
+              .putString(PROXY_HOST_KEY, settings.getProxyHost())
+              .putInt(PROXY_PORT_KEY, settings.getProxyPort());
+    }
+    return edit;
   }
 
   void updateLastFetchAsSuccessfulAt(Date fetchTime) {

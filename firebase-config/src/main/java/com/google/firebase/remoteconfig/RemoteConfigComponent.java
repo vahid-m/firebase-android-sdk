@@ -93,8 +93,7 @@ public class RemoteConfigComponent {
       FirebaseApp firebaseApp,
       FirebaseInstanceId firebaseInstanceId,
       FirebaseABTesting firebaseAbt,
-      @Nullable AnalyticsConnector analyticsConnector,
-      @Nullable Proxy proxy) {
+      @Nullable AnalyticsConnector analyticsConnector) {
     this(
         context,
         Executors.newCachedThreadPool(),
@@ -103,8 +102,7 @@ public class RemoteConfigComponent {
         firebaseAbt,
         analyticsConnector,
         new LegacyConfigsHandler(context, firebaseApp.getOptions().getApplicationId()),
-        /* loadGetDefault= */ true,
-        proxy);
+        /* loadGetDefault= */ true);
   }
 
   /** Firebase Remote Config Component constructor for testing component logic. */
@@ -117,8 +115,7 @@ public class RemoteConfigComponent {
       FirebaseABTesting firebaseAbt,
       @Nullable AnalyticsConnector analyticsConnector,
       LegacyConfigsHandler legacyConfigsHandler,
-      boolean loadGetDefault,
-      @Nullable Proxy proxy) {
+      boolean loadGetDefault) {
     this.context = context;
     this.executorService = executorService;
     this.firebaseApp = firebaseApp;
@@ -133,7 +130,7 @@ public class RemoteConfigComponent {
     // while another test has already cleared the component but hasn't gotten a new one yet.
     if (loadGetDefault) {
       // Loads the default namespace's configs from disk on App startup.
-      Tasks.call(executorService, () -> getDefault(proxy));
+      Tasks.call(executorService, this::getDefault);
       Tasks.call(executorService, legacyConfigsHandler::saveLegacyConfigsIfNecessary);
     }
   }
@@ -141,8 +138,8 @@ public class RemoteConfigComponent {
   /**
    * Returns the default Firebase Remote Config instance for this component's {@link FirebaseApp}.
    */
-  FirebaseRemoteConfig getDefault(@Nullable Proxy proxy) {
-    return get(DEFAULT_NAMESPACE, proxy);
+  FirebaseRemoteConfig getDefault() {
+    return get(DEFAULT_NAMESPACE);
   }
 
   /**
@@ -153,7 +150,7 @@ public class RemoteConfigComponent {
    */
   @VisibleForTesting
   @KeepForSdk
-  public synchronized FirebaseRemoteConfig get(String namespace, @Nullable Proxy proxy) {
+  public synchronized FirebaseRemoteConfig get(String namespace) {
     ConfigCacheClient fetchedCacheClient = getCacheClient(namespace, FETCH_FILE_NAME);
     ConfigCacheClient activatedCacheClient = getCacheClient(namespace, ACTIVATE_FILE_NAME);
     ConfigCacheClient defaultsCacheClient = getCacheClient(namespace, DEFAULTS_FILE_NAME);
@@ -166,7 +163,7 @@ public class RemoteConfigComponent {
         fetchedCacheClient,
         activatedCacheClient,
         defaultsCacheClient,
-        getFetchHandler(namespace, fetchedCacheClient, metadataClient, proxy),
+        getFetchHandler(namespace, fetchedCacheClient, metadataClient),
         getGetHandler(activatedCacheClient, defaultsCacheClient),
         metadataClient);
   }
@@ -227,7 +224,7 @@ public class RemoteConfigComponent {
 
   @VisibleForTesting
   ConfigFetchHttpClient getFrcBackendApiClient(
-          String apiKey, String namespace, ConfigMetadataClient metadataClient, Proxy proxy) {
+          String apiKey, String namespace, ConfigMetadataClient metadataClient) {
     String appId = firebaseApp.getOptions().getApplicationId();
     return new ConfigFetchHttpClient(
         context,
@@ -236,12 +233,12 @@ public class RemoteConfigComponent {
         namespace,
         metadataClient.getFetchTimeoutInSeconds(),
         NETWORK_CONNECTION_TIMEOUT_IN_SECONDS,
-        proxy);
+        metadataClient.getProxyServer());
   }
 
   @VisibleForTesting
   synchronized ConfigFetchHandler getFetchHandler(
-      String namespace, ConfigCacheClient fetchedCacheClient, ConfigMetadataClient metadataClient, Proxy proxy) {
+      String namespace, ConfigCacheClient fetchedCacheClient, ConfigMetadataClient metadataClient) {
     return new ConfigFetchHandler(
         firebaseInstanceId,
         isPrimaryApp(firebaseApp) ? analyticsConnector : null,
@@ -249,7 +246,7 @@ public class RemoteConfigComponent {
         DEFAULT_CLOCK,
         DEFAULT_RANDOM,
         fetchedCacheClient,
-        getFrcBackendApiClient(firebaseApp.getOptions().getApiKey(), namespace, metadataClient, proxy),
+        getFrcBackendApiClient(firebaseApp.getOptions().getApiKey(), namespace, metadataClient),
         metadataClient,
         this.customHeaders);
   }

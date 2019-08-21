@@ -75,33 +75,14 @@ public class FirebaseRemoteConfig {
    *     FirebaseApp}.
    */
   @NonNull
-  public static FirebaseRemoteConfig getInstance(@Nullable Proxy proxy) {
-    return getInstance(FirebaseApp.getInstance(), proxy);
-  }
-
-  /**
-   * Returns a singleton instance of Firebase Remote Config.
-   *
-   * <p>{@link FirebaseRemoteConfig} uses the default {@link FirebaseApp}, so if no {@link
-   * FirebaseApp} has been initialized yet, this method throws an {@link IllegalStateException}.
-   *
-   * <p>To identify the current app instance, the fetch request creates a Firebase Instance ID
-   * token, which periodically sends data to the Firebase backend. To stop the periodic sync, call
-   * {@link com.google.firebase.iid.FirebaseInstanceId#deleteInstanceId}. To create a new token and
-   * resume the periodic sync, call {@code fetchConfig} again.
-   *
-   * @return A singleton instance of {@link FirebaseRemoteConfig} for the default {@link
-   *     FirebaseApp}.
-   */
-  @NonNull
   public static FirebaseRemoteConfig getInstance() {
-    return getInstance(FirebaseApp.getInstance(), null);
+    return getInstance(FirebaseApp.getInstance());
   }
 
   /** Returns an instance of Firebase Remote Config for the given {@link FirebaseApp}. */
   @NonNull
-  public static FirebaseRemoteConfig getInstance(@NonNull FirebaseApp app, @Nullable Proxy proxy) {
-    return app.get(RemoteConfigComponent.class).getDefault(proxy);
+  public static FirebaseRemoteConfig getInstance(@NonNull FirebaseApp app) {
+    return app.get(RemoteConfigComponent.class).getDefault();
   }
 
   // -------------------------------------------------------------------------------
