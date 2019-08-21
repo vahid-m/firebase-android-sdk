@@ -34,8 +34,6 @@ import com.google.firebase.remoteconfig.internal.ConfigGetParameterHandler;
 import com.google.firebase.remoteconfig.internal.ConfigMetadataClient;
 import com.google.firebase.remoteconfig.internal.ConfigStorageClient;
 import com.google.firebase.remoteconfig.internal.LegacyConfigsHandler;
-
-import java.net.Proxy;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
@@ -233,7 +231,9 @@ public class RemoteConfigComponent {
         namespace,
         metadataClient.getFetchTimeoutInSeconds(),
         NETWORK_CONNECTION_TIMEOUT_IN_SECONDS,
-        metadataClient.getProxyServer());
+        metadataClient.getProxyType(),
+        metadataClient.getProxyHost(),
+        metadataClient.getProxyPort());
   }
 
   @VisibleForTesting

@@ -98,18 +98,17 @@ public class ConfigMetadataClient {
         MINIMUM_FETCH_INTERVAL_IN_SECONDS_KEY, DEFAULT_MINIMUM_FETCH_INTERVAL_IN_SECONDS);
   }
 
-  @Nullable
-  public Proxy getProxyServer() {
+  public Proxy.Type getProxyType() {
     int proxyType = frcMetadata.getInt(PROXY_TYPE_KEY, Proxy.Type.DIRECT.ordinal());
-    if (proxyType == Proxy.Type.DIRECT.ordinal()) {
-      return null;
-    }
+    return Proxy.Type.values()[proxyType];
+  }
 
-    InetSocketAddress sa = new InetSocketAddress(
-            frcMetadata.getString(PROXY_HOST_KEY, ""),
-            frcMetadata.getInt(PROXY_PORT_KEY, 0));
+  public String getProxyHost() {
+    return frcMetadata.getString(PROXY_HOST_KEY, "");
+  }
 
-    return new Proxy(Proxy.Type.values()[proxyType], sa);
+  public int getProxyPort() {
+    return frcMetadata.getInt(PROXY_PORT_KEY, 0);
   }
 
   @LastFetchStatus

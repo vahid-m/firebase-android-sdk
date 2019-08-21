@@ -53,6 +53,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
@@ -87,7 +88,10 @@ public class ConfigFetchHttpClient {
   private final String namespace;
   private final long connectTimeoutInSeconds;
   private final long readTimeoutInSeconds;
-  private final Proxy proxy;
+  private final Proxy.Type proxyType;
+  private final String proxyHost;
+  private final int proxyPort;
+
 
   /** Creates a client for {@link #fetch}ing data from the Firebase Remote Config server. */
   public ConfigFetchHttpClient(
@@ -97,7 +101,9 @@ public class ConfigFetchHttpClient {
         String namespace,
         long connectTimeoutInSeconds,
         long readTimeoutInSeconds,
-        @Nullable Proxy proxy) {
+        Proxy.Type proxyType,
+        String proxyHost,
+        int proxyPort) {
     this.context = context;
     this.appId = appId;
     this.apiKey = apiKey;
@@ -105,7 +111,9 @@ public class ConfigFetchHttpClient {
     this.namespace = namespace;
     this.connectTimeoutInSeconds = connectTimeoutInSeconds;
     this.readTimeoutInSeconds = readTimeoutInSeconds;
-    this.proxy = proxy;
+    this.proxyType = proxyType;
+    this.proxyHost = proxyHost;
+    this.proxyPort = proxyPort;
   }
 
   /** Used to verify that the timeout is being set correctly. */
@@ -139,7 +147,12 @@ public class ConfigFetchHttpClient {
   HttpURLConnection createHttpURLConnection() throws FirebaseRemoteConfigException {
     try {
       URL url = new URL(getFetchUrl(projectNumber, namespace));
-      return (HttpURLConnection) (proxy == null ? url.openConnection() : url.openConnection(proxy));
+      if (proxyType == Proxy.Type.DIRECT) {
+        return (HttpURLConnection) url.openConnection();
+      } else {
+        InetSocketAddress sa = new InetSocketAddress(proxyHost, proxyPort);
+        return (HttpURLConnection) url.openConnection(new Proxy(proxyType, sa));
+      }
     } catch (IOException e) {
       throw new FirebaseRemoteConfigException(e.getMessage());
     }

@@ -33,8 +33,6 @@ import com.google.firebase.remoteconfig.internal.ConfigFetchHandler.FetchRespons
 import com.google.firebase.remoteconfig.internal.ConfigGetParameterHandler;
 import com.google.firebase.remoteconfig.internal.ConfigMetadataClient;
 import com.google.firebase.remoteconfig.internal.DefaultsXmlParser;
-
-import java.net.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
