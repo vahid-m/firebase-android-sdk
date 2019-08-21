@@ -38,6 +38,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.util.Log;
 import androidx.annotation.Keep;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import com.google.android.gms.common.util.AndroidUtilsLight;
 import com.google.android.gms.common.util.Hex;
@@ -52,6 +53,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
 import java.util.Date;
@@ -85,15 +87,17 @@ public class ConfigFetchHttpClient {
   private final String namespace;
   private final long connectTimeoutInSeconds;
   private final long readTimeoutInSeconds;
+  private final Proxy proxy;
 
   /** Creates a client for {@link #fetch}ing data from the Firebase Remote Config server. */
   public ConfigFetchHttpClient(
-      Context context,
-      String appId,
-      String apiKey,
-      String namespace,
-      long connectTimeoutInSeconds,
-      long readTimeoutInSeconds) {
+        Context context,
+        String appId,
+        String apiKey,
+        String namespace,
+        long connectTimeoutInSeconds,
+        long readTimeoutInSeconds,
+        @Nullable Proxy proxy) {
     this.context = context;
     this.appId = appId;
     this.apiKey = apiKey;
@@ -101,6 +105,7 @@ public class ConfigFetchHttpClient {
     this.namespace = namespace;
     this.connectTimeoutInSeconds = connectTimeoutInSeconds;
     this.readTimeoutInSeconds = readTimeoutInSeconds;
+    this.proxy = proxy;
   }
 
   /** Used to verify that the timeout is being set correctly. */
@@ -134,7 +139,7 @@ public class ConfigFetchHttpClient {
   HttpURLConnection createHttpURLConnection() throws FirebaseRemoteConfigException {
     try {
       URL url = new URL(getFetchUrl(projectNumber, namespace));
-      return (HttpURLConnection) url.openConnection();
+      return (HttpURLConnection) (proxy == null ? url.openConnection() : url.openConnection(proxy));
     } catch (IOException e) {
       throw new FirebaseRemoteConfigException(e.getMessage());
     }
