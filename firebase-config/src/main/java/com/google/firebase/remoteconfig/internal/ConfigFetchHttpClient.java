@@ -49,14 +49,17 @@ import com.google.firebase.remoteconfig.FirebaseRemoteConfigServerException;
 import com.google.firebase.remoteconfig.internal.ConfigFetchHandler.FetchResponse;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.Charset;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
@@ -339,12 +342,21 @@ public class ConfigFetchHttpClient {
 
   private JSONObject getFetchResponseBody(URLConnection urlConnection)
       throws IOException, JSONException {
-    InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+//    InputStream in = new BufferedInputStream(urlConnection.getInputStream());
+//    StringBuilder responseStringBuilder = new StringBuilder();
+//    int current = 0;
+//    while ((current = in.read()) != -1) {
+//      responseStringBuilder.append((char) current);
+//    }
+
+    BufferedReader input = new BufferedReader(
+            new InputStreamReader(urlConnection.getInputStream(), Charset.forName("UTF8")));
     StringBuilder responseStringBuilder = new StringBuilder();
-    int current = 0;
-    while ((current = in.read()) != -1) {
-      responseStringBuilder.append((char) current);
+    String str;
+    while (null != (str = input.readLine())) {
+      responseStringBuilder.append(str).append("\r\n");
     }
+    input.close();
 
     return new JSONObject(responseStringBuilder.toString());
   }
