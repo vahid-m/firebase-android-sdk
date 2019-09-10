@@ -36,6 +36,7 @@ buildscript {
         classpath 'digital.wup:android-maven-publish:3.6.2'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
         classpath 'org.jlleitschuh.gradle:ktlint-gradle:7.1.0'
+        classpath "org.jfrog.buildinfo:build-info-extractor-gradle:4.9.7"
     }
 }
 
@@ -63,6 +64,9 @@ firebaseContinuousIntegration {
 }
 
 configure(subprojects) {
+    apply plugin: 'digital.wup.android-maven-publish'
+    apply plugin: 'com.jfrog.artifactory'
+
     repositories {
         google()
         jcenter()

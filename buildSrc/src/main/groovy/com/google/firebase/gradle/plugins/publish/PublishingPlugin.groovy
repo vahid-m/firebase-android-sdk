@@ -101,7 +101,19 @@ class PublishingPlugin implements Plugin<Project> {
                 sub.publishing {
                     repositories {
                         maven {
+                            /* build to build directory
                             url = "file://$rootProject.buildDir/m2repository"
+                            */
+
+                            /*
+                            * to publish to artifactory
+                            * example: ./gradlew publishAllToBuildDir -Pusername="test" -Ppassword="***"
+                             */
+                            url 'https://maven.oddrun.ir/artifactory/commons/'
+                            credentials {
+                                username project.properties.getOrDefault('username', '')
+                                password project.properties.getOrDefault('password', '')
+                            }
                             name = 'BuildDir'
                         }
                     }
@@ -111,12 +123,12 @@ class PublishingPlugin implements Plugin<Project> {
 
                             artifactId = firebaseLibrary.artifactId.get()
                             groupId = firebaseLibrary.groupId.get()
-                            if (firebaseLibrary.publishSources) {
+                            /*if (firebaseLibrary.publishSources) {
                                 artifact sub.tasks.create("sourcesJar", Jar) {
                                     from sub.android.sourceSets.main.java.srcDirs
                                     classifier "sources"
                                 }
-                            }
+                            }*/
                             firebaseLibrary.applyPomCustomization(pom)
                             publisher.decorate(sub, it)
                         }

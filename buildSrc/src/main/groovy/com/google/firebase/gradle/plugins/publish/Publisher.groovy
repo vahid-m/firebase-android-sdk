@@ -48,7 +48,7 @@ class Publisher {
     /** Determines the version to publish a project with. */
     String determineVersion(Project p) {
         if(projectsToPublish.empty || projectsToPublish.contains(p)) {
-            return renderVersion(p.version.toString(), mode)
+            return renderVersion(p.version, mode)
         }
         if (p.hasProperty('latestReleasedVersion')) {
             return p.latestReleasedVersion
