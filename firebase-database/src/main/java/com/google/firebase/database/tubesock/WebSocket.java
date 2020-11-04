@@ -14,7 +14,6 @@
 
 package com.google.firebase.database.tubesock;
 
-import android.net.SSLCertificateSocketFactory;
 import android.net.SSLSessionCache;
 import androidx.annotation.Nullable;
 import com.google.firebase.database.connection.ConnectionContext;
@@ -314,8 +313,10 @@ public class WebSocket {
         logger.debug("Failed to initialize SSL session cache", e);
       }
       try {
+        @SuppressWarnings("deprecation")
         SocketFactory factory =
-            SSLCertificateSocketFactory.getDefault(SSL_HANDSHAKE_TIMEOUT_MS, sessionCache);
+            android.net.SSLCertificateSocketFactory.getDefault(
+                SSL_HANDSHAKE_TIMEOUT_MS, sessionCache);
         SSLSocket sslSocket = (SSLSocket) factory.createSocket(host, port);
         // TODO: the default hostname verifier on the JVM always returns false.
         // For the JVM we will need a different solution.
@@ -427,9 +428,8 @@ public class WebSocket {
       receiver.run();
     } catch (WebSocketException wse) {
       eventHandler.onError(wse);
-    } catch (IOException ioe) {
-      eventHandler.onError(
-          new WebSocketException("error while connecting: " + ioe.getMessage(), ioe));
+    } catch (Throwable t) {
+      eventHandler.onError(new WebSocketException("error while connecting: " + t.getMessage(), t));
     } finally {
       close();
     }

@@ -14,6 +14,7 @@
 
 package com.google.firebase.firestore.local;
 
+import static com.google.firebase.firestore.util.Assert.fail;
 import static com.google.firebase.firestore.util.Assert.hardAssert;
 
 import android.content.ContentValues;
@@ -24,9 +25,11 @@ import android.database.sqlite.SQLiteStatement;
 import android.text.TextUtils;
 import android.util.Log;
 import androidx.annotation.VisibleForTesting;
-import com.google.common.base.Preconditions;
 import com.google.firebase.firestore.model.ResourcePath;
+import com.google.firebase.firestore.proto.Target;
 import com.google.firebase.firestore.util.Consumer;
+import com.google.firebase.firestore.util.Preconditions;
+import com.google.protobuf.InvalidProtocolBufferException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -46,7 +49,8 @@ class SQLiteSchema {
    * The version of the schema. Increase this by one for each migration added to runMigrations
    * below.
    */
-  static final int VERSION = 8;
+  static final int VERSION = 11;
+
   // Remove this constant and increment VERSION to enable indexing support
   static final int INDEXING_SUPPORT_VERSION = VERSION + 1;
 
@@ -61,9 +65,11 @@ class SQLiteSchema {
 
   private final SQLiteDatabase db;
 
-  // PORTING NOTE: The Android client doesn't need to use a serializer to remove held write acks.
-  SQLiteSchema(SQLiteDatabase db) {
+  private final LocalSerializer serializer;
+
+  SQLiteSchema(SQLiteDatabase db, LocalSerializer serializer) {
     this.db = db;
+    this.serializer = serializer;
   }
 
   void runMigrations() {
@@ -90,7 +96,7 @@ class SQLiteSchema {
 
     if (fromVersion < 1 && toVersion >= 1) {
       createV1MutationQueue();
-      createV1QueryCache();
+      createV1TargetCache();
       createV1RemoteDocumentCache();
     }
 
@@ -101,8 +107,8 @@ class SQLiteSchema {
       // Brand new clients don't need to drop and recreate--only clients that have potentially
       // corrupt data.
       if (fromVersion != 0) {
-        dropV1QueryCache();
-        createV1QueryCache();
+        dropV1TargetCache();
+        createV1TargetCache();
       }
     }
 
@@ -125,6 +131,31 @@ class SQLiteSchema {
 
     if (fromVersion < 8 && toVersion >= 8) {
       createV8CollectionParentsIndex();
+    }
+
+    if (fromVersion < 9 && toVersion >= 9) {
+      if (!hasReadTime()) {
+        addReadTime();
+      } else {
+        // Index-free queries rely on the fact that documents updated after a query's last limbo
+        // free snapshot version are persisted with their read-time. If a customer upgrades to
+        // schema version 9, downgrades and then upgrades again, some queries may have a last limbo
+        // free snapshot version despite the fact that not all updated document have an associated
+        // read time.
+        dropLastLimboFreeSnapshotVersion();
+      }
+    }
+
+    if (fromVersion == 9 && toVersion >= 10) {
+      // Firestore v21.10 contained a regression that led us to disable an assert that is required
+      // to ensure data integrity. While the schema did not change between version 9 and 10, we use
+      // the schema bump to version 10 to clear any affected data.
+      dropLastLimboFreeSnapshotVersion();
+    }
+
+    if (fromVersion < 11 && toVersion >= 11) {
+      // Schema version 11 changed the format of canonical IDs in the target cache.
+      rewriteCanonicalIds();
     }
 
     /*
@@ -241,7 +272,7 @@ class SQLiteSchema {
         new Object[] {uid, batchId});
   }
 
-  private void createV1QueryCache() {
+  private void createV1TargetCache() {
     ifTablesDontExist(
         new String[] {"targets", "target_globals", "target_documents"},
         () -> {
@@ -278,7 +309,7 @@ class SQLiteSchema {
         });
   }
 
-  private void dropV1QueryCache() {
+  private void dropV1TargetCache() {
     // This might be overkill, but if any future migration drops these, it's possible we could try
     // dropping tables that don't exist.
     if (tableExists("targets")) {
@@ -349,6 +380,41 @@ class SQLiteSchema {
     if (!tableContainsColumn("target_documents", "sequence_number")) {
       db.execSQL("ALTER TABLE target_documents ADD COLUMN sequence_number INTEGER");
     }
+  }
+
+  private boolean hasReadTime() {
+    boolean hasReadTimeSeconds = tableContainsColumn("remote_documents", "read_time_seconds");
+    boolean hasReadTimeNanos = tableContainsColumn("remote_documents", "read_time_nanos");
+
+    hardAssert(
+        hasReadTimeSeconds == hasReadTimeNanos,
+        "Table contained just one of read_time_seconds or read_time_nanos");
+
+    return hasReadTimeSeconds && hasReadTimeNanos;
+  }
+
+  private void addReadTime() {
+    db.execSQL("ALTER TABLE remote_documents ADD COLUMN read_time_seconds INTEGER");
+    db.execSQL("ALTER TABLE remote_documents ADD COLUMN read_time_nanos INTEGER");
+  }
+
+  private void dropLastLimboFreeSnapshotVersion() {
+    new SQLitePersistence.Query(db, "SELECT target_id, target_proto FROM targets")
+        .forEach(
+            cursor -> {
+              int targetId = cursor.getInt(0);
+              byte[] targetProtoBytes = cursor.getBlob(1);
+
+              try {
+                Target targetProto = Target.parseFrom(targetProtoBytes);
+                targetProto = targetProto.toBuilder().clearLastLimboFreeSnapshotVersion().build();
+                db.execSQL(
+                    "UPDATE targets SET target_proto = ? WHERE target_id = ?",
+                    new Object[] {targetProto.toByteArray(), targetId});
+              } catch (InvalidProtocolBufferException e) {
+                throw fail("Failed to decode Query data for target %s", targetId);
+              }
+            });
   }
 
   /**
@@ -470,6 +536,26 @@ class SQLiteSchema {
     }
     return columns;
   }
+
+  private void rewriteCanonicalIds() {
+    new SQLitePersistence.Query(db, "SELECT target_id, target_proto FROM targets")
+        .forEach(
+            cursor -> {
+              int targetId = cursor.getInt(0);
+              byte[] targetProtoBytes = cursor.getBlob(1);
+
+              try {
+                Target targetProto = Target.parseFrom(targetProtoBytes);
+                TargetData targetData = serializer.decodeTargetData(targetProto);
+                String updatedCanonicalId = targetData.getTarget().getCanonicalId();
+                db.execSQL(
+                    "UPDATE targets SET canonical_id  = ? WHERE target_id = ?",
+                    new Object[] {updatedCanonicalId, targetId});
+              } catch (InvalidProtocolBufferException e) {
+                throw fail("Failed to decode Query data for target %s", targetId);
+              }
+            });
+  };
 
   private boolean tableExists(String table) {
     return !new SQLitePersistence.Query(db, "SELECT 1=1 FROM sqlite_master WHERE tbl_name = ?")

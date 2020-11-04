@@ -14,6 +14,7 @@
 
 package com.google.firebase.database;
 
+import static com.google.firebase.database.core.utilities.Utilities.hardAssert;
 import static com.google.firebase.database.snapshot.NodeUtilities.NodeFromJSON;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
@@ -109,7 +110,7 @@ public class IntegrationTestHelpers {
     }
     int remainingLength = size - builder.length();
     builder.append(pattern.substring(0, remainingLength));
-    assert builder.length() == size : "The string size did not match the expected size";
+    hardAssert(builder.length() == size, "The string size did not match the expected size");
     return NodeFromJSON(builder.toString());
   }
 
@@ -300,7 +301,7 @@ public class IntegrationTestHelpers {
         Map<String, Object> data = new ObjectMapper().readValue(response, t);
         testSecret = (String) ((List) data.get("secrets")).get(0);
       } catch (Throwable e) {
-        fail("Could not get test secret.");
+        throw new AssertionError("Could not get test secret. ", e);
       }
     }
     return testSecret;

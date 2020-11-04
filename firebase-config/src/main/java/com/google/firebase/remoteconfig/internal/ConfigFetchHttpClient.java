@@ -36,6 +36,7 @@ import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
+import android.os.Build;
 import android.util.Log;
 import androidx.annotation.Keep;
 import androidx.annotation.Nullable;
@@ -47,10 +48,10 @@ import com.google.firebase.remoteconfig.FirebaseRemoteConfigClientException;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigException;
 import com.google.firebase.remoteconfig.FirebaseRemoteConfigServerException;
 import com.google.firebase.remoteconfig.internal.ConfigFetchHandler.FetchResponse;
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
@@ -83,6 +84,8 @@ public class ConfigFetchHttpClient {
   private static final String X_ANDROID_PACKAGE_HEADER = "X-Android-Package";
   private static final String X_ANDROID_CERT_HEADER = "X-Android-Cert";
   private static final String X_GOOGLE_GFE_CAN_RETRY = "X-Google-GFE-Can-Retry";
+  private static final String INSTALLATIONS_AUTH_TOKEN_HEADER =
+      "X-Goog-Firebase-Installations-Auth";
 
   private final Context context;
   private final String appId;
@@ -169,9 +172,9 @@ public class ConfigFetchHttpClient {
    *
    * @param urlConnection a {@link HttpURLConnection} created by a call to {@link
    *     #createHttpURLConnection}.
-   * @param instanceId the Firebase Instance ID that identifies a Firebase App Instance.
-   * @param instanceIdToken a valid Firebase Instance ID Token that authenticates a Firebase App
-   *     Instance.
+   * @param installationId the Firebase installation ID that identifies a Firebase App Instance.
+   * @param installationAuthToken a valid Firebase installation auth token that authenticates a
+   *     Firebase App Instance.
    * @param analyticsUserProperties a map of Google Analytics User Properties and the device's
    *     corresponding values.
    * @param lastFetchETag the ETag returned by the last successful fetch call to the FRC server. The
@@ -184,22 +187,22 @@ public class ConfigFetchHttpClient {
   @Keep
   FetchResponse fetch(
       HttpURLConnection urlConnection,
-      String instanceId,
-      String instanceIdToken,
+      String installationId,
+      String installationAuthToken,
       Map<String, String> analyticsUserProperties,
       String lastFetchETag,
       Map<String, String> customHeaders,
       Date currentTime)
       throws FirebaseRemoteConfigException {
-    setUpUrlConnection(urlConnection, lastFetchETag, customHeaders);
+    setUpUrlConnection(urlConnection, lastFetchETag, installationAuthToken, customHeaders);
 
     String fetchResponseETag;
     JSONObject fetchResponse;
     try {
       byte[] requestBody =
-          createFetchRequestBody(instanceId, instanceIdToken, analyticsUserProperties)
+          createFetchRequestBody(installationId, installationAuthToken, analyticsUserProperties)
               .toString()
-              .getBytes();
+              .getBytes("utf-8");
       setFetchRequestBody(urlConnection, requestBody);
 
       urlConnection.connect();
@@ -216,6 +219,11 @@ public class ConfigFetchHttpClient {
           "The client had an error while calling the backend!", e);
     } finally {
       urlConnection.disconnect();
+      // Explicitly close the input stream due to a bug in the Android okhttp implementation.
+      try {
+        urlConnection.getInputStream().close();
+      } catch (IOException e) {
+      }
     }
 
     if (!backendHasUpdates(fetchResponse)) {
@@ -227,7 +235,10 @@ public class ConfigFetchHttpClient {
   }
 
   private void setUpUrlConnection(
-      HttpURLConnection urlConnection, String lastFetchEtag, Map<String, String> customHeaders) {
+      HttpURLConnection urlConnection,
+      String lastFetchEtag,
+      String installationAuthToken,
+      Map<String, String> customHeaders) {
     urlConnection.setDoOutput(true);
     urlConnection.setConnectTimeout((int) SECONDS.toMillis(connectTimeoutInSeconds));
     urlConnection.setReadTimeout((int) SECONDS.toMillis(readTimeoutInSeconds));
@@ -236,7 +247,7 @@ public class ConfigFetchHttpClient {
     // change in the Fetch Response since the last fetch call.
     urlConnection.setRequestProperty(IF_NONE_MATCH_HEADER, lastFetchEtag);
 
-    setCommonRequestHeaders(urlConnection);
+    setCommonRequestHeaders(urlConnection, installationAuthToken);
     setCustomRequestHeaders(urlConnection, customHeaders);
   }
 
@@ -244,7 +255,8 @@ public class ConfigFetchHttpClient {
     return String.format(FETCH_REGEX_URL, projectNumber, namespace);
   }
 
-  private void setCommonRequestHeaders(HttpURLConnection urlConnection) {
+  private void setCommonRequestHeaders(
+      HttpURLConnection urlConnection, String installationAuthToken) {
     urlConnection.setRequestProperty(API_KEY_HEADER, apiKey);
 
     // Headers required for Android API Key Restrictions.
@@ -253,6 +265,9 @@ public class ConfigFetchHttpClient {
 
     // Header to denote request is retryable on the server.
     urlConnection.setRequestProperty(X_GOOGLE_GFE_CAN_RETRY, "yes");
+
+    // Header for FIS auth token
+    urlConnection.setRequestProperty(INSTALLATIONS_AUTH_TOKEN_HEADER, installationAuthToken);
 
     // Headers to denote that the request body is a JSONObject.
     urlConnection.setRequestProperty("Content-Type", "application/json");
@@ -293,21 +308,30 @@ public class ConfigFetchHttpClient {
    * serialized as a JSON.
    */
   private JSONObject createFetchRequestBody(
-      String instanceId, String instanceIdToken, Map<String, String> analyticsUserProperties)
+      String installationId,
+      String installationAuthToken,
+      Map<String, String> analyticsUserProperties)
       throws FirebaseRemoteConfigClientException {
     Map<String, Object> requestBodyMap = new HashMap<>();
 
-    if (instanceId == null) {
-      throw new FirebaseRemoteConfigClientException("Fetch failed: Firebase instance id is null.");
+    if (installationId == null) {
+      throw new FirebaseRemoteConfigClientException(
+          "Fetch failed: Firebase installation id is null.");
     }
-    requestBodyMap.put(INSTANCE_ID, instanceId);
+    requestBodyMap.put(INSTANCE_ID, installationId);
 
-    requestBodyMap.put(INSTANCE_ID_TOKEN, instanceIdToken);
+    requestBodyMap.put(INSTANCE_ID_TOKEN, installationAuthToken);
     requestBodyMap.put(APP_ID, appId);
 
     Locale locale = context.getResources().getConfiguration().locale;
     requestBodyMap.put(COUNTRY_CODE, locale.getCountry());
-    requestBodyMap.put(LANGUAGE_CODE, locale.toString());
+
+    // Locale#toLanguageTag() was added in API level 21 (Lollipop)
+    String languageCode =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+            ? locale.toLanguageTag()
+            : locale.toString();
+    requestBodyMap.put(LANGUAGE_CODE, languageCode);
 
     requestBodyMap.put(PLATFORM_VERSION, Integer.toString(android.os.Build.VERSION.SDK_INT));
 
@@ -326,7 +350,7 @@ public class ConfigFetchHttpClient {
     requestBodyMap.put(PACKAGE_NAME, context.getPackageName());
     requestBodyMap.put(SDK_VERSION, BuildConfig.VERSION_NAME);
 
-    requestBodyMap.put(ANALYTICS_USER_PROPERTIES, analyticsUserProperties);
+    requestBodyMap.put(ANALYTICS_USER_PROPERTIES, new JSONObject(analyticsUserProperties));
 
     return new JSONObject(requestBodyMap);
   }
@@ -342,21 +366,13 @@ public class ConfigFetchHttpClient {
 
   private JSONObject getFetchResponseBody(URLConnection urlConnection)
       throws IOException, JSONException {
-//    InputStream in = new BufferedInputStream(urlConnection.getInputStream());
-//    StringBuilder responseStringBuilder = new StringBuilder();
-//    int current = 0;
-//    while ((current = in.read()) != -1) {
-//      responseStringBuilder.append((char) current);
-//    }
-
-    BufferedReader input = new BufferedReader(
-            new InputStreamReader(urlConnection.getInputStream(), Charset.forName("UTF8")));
+    BufferedReader br =
+        new BufferedReader(new InputStreamReader(urlConnection.getInputStream(), "utf-8"));
     StringBuilder responseStringBuilder = new StringBuilder();
-    String str;
-    while (null != (str = input.readLine())) {
-      responseStringBuilder.append(str).append("\r\n");
+    int current = 0;
+    while ((current = br.read()) != -1) {
+      responseStringBuilder.append((char) current);
     }
-    input.close();
 
     return new JSONObject(responseStringBuilder.toString());
   }

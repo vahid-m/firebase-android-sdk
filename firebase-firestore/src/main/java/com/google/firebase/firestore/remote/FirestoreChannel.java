@@ -38,8 +38,10 @@ import java.util.List;
 /**
  * Wrapper class around io.grpc.Channel that adds headers, exception handling and simplifies
  * invoking RPCs.
+ *
+ * @hide
  */
-class FirestoreChannel {
+public class FirestoreChannel {
 
   private static final Metadata.Key<String> X_GOOG_API_CLIENT_HEADER =
       Metadata.Key.of("x-goog-api-client", Metadata.ASCII_STRING_MARSHALLER);
@@ -47,11 +49,10 @@ class FirestoreChannel {
   private static final Metadata.Key<String> RESOURCE_PREFIX_HEADER =
       Metadata.Key.of("google-cloud-resource-prefix", Metadata.ASCII_STRING_MARSHALLER);
 
-  // TODO: The gRPC version is determined using a package manifest, which is not available
-  // to us at build time or runtime (it's empty when building in google3). So for now we omit the
-  // version of grpc.
-  private static final String X_GOOG_API_CLIENT_VALUE =
-      "gl-java/ fire/" + BuildConfig.VERSION_NAME + " grpc/";
+  /** The client language reported via the X_GOOG_API_CLIENT_HEADER. */
+  // Note: there is no good way to get the Java language version on Android
+  // (System.getProperty("java.version") returns "0", for example).
+  private static volatile String clientLanguage = "gl-java/";
 
   /** The async worker queue that is used to dispatch events. */
   private final AsyncQueue asyncQueue;
@@ -64,12 +65,16 @@ class FirestoreChannel {
   /** The value to use as resource prefix header. */
   private final String resourcePrefixValue;
 
+  private final GrpcMetadataProvider metadataProvider;
+
   FirestoreChannel(
       AsyncQueue asyncQueue,
       Context context,
       CredentialsProvider credentialsProvider,
-      DatabaseInfo databaseInfo) {
+      DatabaseInfo databaseInfo,
+      GrpcMetadataProvider metadataProvider) {
     this.asyncQueue = asyncQueue;
+    this.metadataProvider = metadataProvider;
     this.credentialsProvider = credentialsProvider;
 
     FirestoreCallCredentials firestoreHeaders = new FirestoreCallCredentials(credentialsProvider);
@@ -263,7 +268,7 @@ class FirestoreChannel {
   }
 
   private FirebaseFirestoreException exceptionFromStatus(Status status) {
-    if (Datastore.isSslHandshakeError(status)) {
+    if (Datastore.isMissingSslCiphers(status)) {
       return new FirebaseFirestoreException(
           Datastore.SSL_DEPENDENCY_ERROR_MESSAGE,
           Code.fromValue(status.getCode().value()),
@@ -277,12 +282,23 @@ class FirestoreChannel {
     credentialsProvider.invalidateToken();
   }
 
+  public static void setClientLanguage(String languageToken) {
+    clientLanguage = languageToken;
+  }
+
+  private String getGoogApiClientValue() {
+    return String.format("%s fire/%s grpc/", clientLanguage, BuildConfig.VERSION_NAME);
+  }
+
   /** Returns the default headers for requests to the backend. */
   private Metadata requestHeaders() {
     Metadata headers = new Metadata();
-    headers.put(X_GOOG_API_CLIENT_HEADER, X_GOOG_API_CLIENT_VALUE);
+    headers.put(X_GOOG_API_CLIENT_HEADER, getGoogApiClientValue());
     // This header is used to improve routing and project isolation by the backend.
     headers.put(RESOURCE_PREFIX_HEADER, this.resourcePrefixValue);
+    if (metadataProvider != null) {
+      metadataProvider.updateMetadata(headers);
+    }
     return headers;
   }
 }

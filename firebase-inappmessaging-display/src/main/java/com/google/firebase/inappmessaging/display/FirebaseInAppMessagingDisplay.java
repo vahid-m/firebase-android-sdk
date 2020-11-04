@@ -19,16 +19,18 @@ import static com.google.firebase.inappmessaging.display.internal.FiamAnimator.P
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
+import android.content.Intent;
+import android.content.pm.ResolveInfo;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.text.TextUtils;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewTreeObserver.OnGlobalLayoutListener;
-import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.browser.customtabs.CustomTabsIntent;
-import com.google.android.gms.common.annotation.KeepForSdk;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.inappmessaging.FirebaseInAppMessaging;
 import com.google.firebase.inappmessaging.FirebaseInAppMessagingDisplayCallbacks;
@@ -44,9 +46,18 @@ import com.google.firebase.inappmessaging.display.internal.RenewableTimer;
 import com.google.firebase.inappmessaging.display.internal.bindingwrappers.BindingWrapper;
 import com.google.firebase.inappmessaging.display.internal.injection.modules.InflaterConfigModule;
 import com.google.firebase.inappmessaging.display.internal.injection.scopes.FirebaseAppScope;
+import com.google.firebase.inappmessaging.model.Action;
+import com.google.firebase.inappmessaging.model.BannerMessage;
+import com.google.firebase.inappmessaging.model.CardMessage;
+import com.google.firebase.inappmessaging.model.ImageData;
+import com.google.firebase.inappmessaging.model.ImageOnlyMessage;
 import com.google.firebase.inappmessaging.model.InAppMessage;
 import com.google.firebase.inappmessaging.model.MessageType;
+import com.google.firebase.inappmessaging.model.ModalMessage;
 import com.squareup.picasso.Callback;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import javax.inject.Inject;
 import javax.inject.Provider;
@@ -57,18 +68,14 @@ import javax.inject.Provider;
  * <p>Firebase In-App Messaging Display will automatically initialize, start listening for events,
  * and display eligible in-app messages.
  *
- * <p>This feature uses a Firebase Instance ID token to:
+ * <p>This feature uses a Firebase Installation ID token to:
  *
  * <ul>
  *   <li>identify the app instance
  *   <li>fetch messages from the Firebase backend
  *   <li>send usage metrics to the Firebase backend.
  * </ul>
- *
- * To delete the Instance ID and the data associated with it, see {@link
- * com.google.firebase.iid.FirebaseInstanceId#deleteInstanceId}.
  */
-@Keep
 @FirebaseAppScope
 public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplayImpl {
   static final long IMPRESSION_THRESHOLD_MILLIS = 5 * 1000; // 5 seconds is a valid impression
@@ -90,8 +97,8 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
   private FiamListener fiamListener;
   private InAppMessage inAppMessage;
   private FirebaseInAppMessagingDisplayCallbacks callbacks;
-  private com.google.firebase.inappmessaging.FirebaseInAppMessagingDisplay
-      firebaseInAppMessagingDisplay;
+
+  @VisibleForTesting @Nullable String currentlyBoundActivityName;
 
   @Inject
   FirebaseInAppMessagingDisplay(
@@ -120,7 +127,7 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
    * Get FirebaseInAppMessagingDisplay instance using the default firebase app, returned by {@link
    * FirebaseApp#getInstance()}
    */
-  @Keep
+  @NonNull
   public static FirebaseInAppMessagingDisplay getInstance() {
     return FirebaseApp.getInstance().get(FirebaseInAppMessagingDisplay.class);
   }
@@ -134,8 +141,6 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
    *
    * @hide
    */
-  @Keep
-  @KeepForSdk
   public void testMessage(
       Activity activity,
       InAppMessage inAppMessage,
@@ -150,8 +155,6 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
    *
    * @hide
    */
-  @Keep
-  @KeepForSdk
   public void setFiamListener(FiamListener listener) {
     this.fiamListener = listener;
   }
@@ -161,26 +164,41 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
    *
    * @hide
    */
-  @Keep
-  @KeepForSdk
   public void clearFiamListener() {
     this.fiamListener = null;
   }
 
   /**
-   * Clears fiam listener
+   * Bind FIAM listener on Activity resume.
    *
    * @hide
    */
-  @Keep
-  @KeepForSdk
   @Override
-  public void onActivityStarted(final Activity activity) {
-    // Register FIAM listener with the headless sdk.
-    firebaseInAppMessagingDisplay =
-        new com.google.firebase.inappmessaging.FirebaseInAppMessagingDisplay() {
-          @Override
-          public void displayMessage(InAppMessage iam, FirebaseInAppMessagingDisplayCallbacks cb) {
+  public void onActivityResumed(Activity activity) {
+    super.onActivityResumed(activity);
+    bindFiamToActivity(activity);
+  }
+
+  /**
+   * Clear FIAM listener on activity paused
+   *
+   * @hide
+   */
+  @Override
+  public void onActivityPaused(Activity activity) {
+    unbindFiamFromActivity(activity);
+    headlessInAppMessaging.removeAllListeners();
+    super.onActivityPaused(activity);
+  }
+
+  private void bindFiamToActivity(Activity activity) {
+    // If we have no currently bound activity or are currently bound to a different activity then
+    // bind to this new activity.
+    if (currentlyBoundActivityName == null
+        || !currentlyBoundActivityName.equals(activity.getLocalClassName())) {
+      Logging.logi("Binding to activity: " + activity.getLocalClassName());
+      headlessInAppMessaging.setMessageDisplayComponent(
+          (iam, cb) -> {
             // When we are in the middle of showing a message, we ignore other notifications these
             // messages will be fired when the corresponding events happen the next time.
             if (inAppMessage != null || headlessInAppMessaging.areMessagesSuppressed()) {
@@ -190,39 +208,26 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
             inAppMessage = iam;
             callbacks = cb;
             showActiveFiam(activity);
-          }
-        };
-
-    headlessInAppMessaging.setMessageDisplayComponent(firebaseInAppMessagingDisplay);
-  }
-
-  /**
-   * Clear fiam listener on activity paused
-   *
-   * @hide
-   */
-  @Keep
-  @KeepForSdk
-  @Override
-  public void onActivityPaused(Activity activity) {
-    super.onActivityPaused(activity);
-    // clear all state scoped to activity and dismiss fiam
-    headlessInAppMessaging.clearDisplayListener();
-    imageLoader.cancelTag(activity.getClass());
-    removeDisplayedFiam(activity);
-  }
-  /**
-   * Clear fiam listener on activity resumed
-   *
-   * @hide
-   */
-  @Keep
-  @KeepForSdk
-  @Override
-  public void onActivityResumed(Activity activity) {
-    super.onActivityResumed(activity);
+          });
+      // set the current activity to be the one passed in so that we know not to bind again to the
+      // same activity
+      currentlyBoundActivityName = activity.getLocalClassName();
+    }
     if (inAppMessage != null) {
       showActiveFiam(activity);
+    }
+  }
+
+  private void unbindFiamFromActivity(Activity activity) {
+    // If we are attempting to unbind from an activity, first check to see that we are currently
+    // bound to it
+    if (currentlyBoundActivityName != null
+        && currentlyBoundActivityName.equals(activity.getLocalClassName())) {
+      Logging.logi("Unbinding from activity: " + activity.getLocalClassName());
+      headlessInAppMessaging.clearDisplayListener();
+      imageLoader.cancelTag(activity.getClass());
+      removeDisplayedFiam(activity);
+      currentlyBoundActivityName = null;
     }
   }
 
@@ -237,6 +242,11 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
       Logging.loge("No active message found to render");
       return;
     }
+
+    if (inAppMessage.getMessageType().equals(MessageType.UNSUPPORTED)) {
+      Logging.loge("The message being triggered is not supported by this version of the sdk.");
+      return;
+    }
     notifyFiamTrigger();
 
     InAppMessageLayoutConfig config =
@@ -248,12 +258,23 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
 
     final BindingWrapper bindingWrapper;
 
-    if (inAppMessage.getMessageType() == MessageType.MODAL) {
-      bindingWrapper = bindingWrapperFactory.createModalBindingWrapper(config, inAppMessage);
-    } else if (inAppMessage.getMessageType() == MessageType.BANNER) {
-      bindingWrapper = bindingWrapperFactory.createBannerBindingWrapper(config, inAppMessage);
-    } else {
-      bindingWrapper = bindingWrapperFactory.createImageBindingWrapper(config, inAppMessage);
+    switch (inAppMessage.getMessageType()) {
+      case BANNER:
+        bindingWrapper = bindingWrapperFactory.createBannerBindingWrapper(config, inAppMessage);
+        break;
+      case MODAL:
+        bindingWrapper = bindingWrapperFactory.createModalBindingWrapper(config, inAppMessage);
+        break;
+      case IMAGE_ONLY:
+        bindingWrapper = bindingWrapperFactory.createImageBindingWrapper(config, inAppMessage);
+        break;
+      case CARD:
+        bindingWrapper = bindingWrapperFactory.createCardBindingWrapper(config, inAppMessage);
+        break;
+      default:
+        Logging.loge("No bindings found for this message type");
+        // so we should break out completely and not attempt to show anything
+        return;
     }
 
     // The WindowManager LayoutParams.TYPE_APPLICATION_PANEL requires tokens from the activity
@@ -285,37 +306,38 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
           }
         };
 
-    // If the message has an action, but not an action url, we dismiss when the action
-    // button is
-    // clicked;
-    final View.OnClickListener actionListener;
-    if (inAppMessage.getAction() != null
-        && !TextUtils.isEmpty(inAppMessage.getAction().getActionUrl())) {
-      actionListener =
-          new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-              if (callbacks != null) {
-                callbacks.messageClicked();
+    Map<Action, View.OnClickListener> actionListeners = new HashMap<>();
+    for (Action action : extractActions(inAppMessage)) {
+      final View.OnClickListener actionListener;
+      // TODO: need an onclick listener per action
+      // If the message has an action and an action url, set up an intent to handle the url
+      if (action != null && !TextUtils.isEmpty(action.getActionUrl())) {
+        actionListener =
+            new View.OnClickListener() {
+              @Override
+              public void onClick(View v) {
+                if (callbacks != null) {
+                  Logging.logi("Calling callback for click action");
+                  callbacks.messageClicked(action);
+                }
+                launchUriIntent(activity, Uri.parse(action.getActionUrl()));
+                notifyFiamClick();
+                // Ensure that we remove the displayed FIAM, and ensure that on re-load, the message
+                // isn't re-displayed
+                removeDisplayedFiam(activity);
+                inAppMessage = null;
+                callbacks = null;
               }
-              final CustomTabsIntent i = new CustomTabsIntent.Builder().setShowTitle(true).build();
-
-              i.launchUrl(activity, Uri.parse(inAppMessage.getAction().getActionUrl()));
-              notifyFiamClick();
-              // Ensure that we remove the displayed FIAM, and ensure that on re-load, the message
-              // isn't re-displayed
-              removeDisplayedFiam(activity);
-              inAppMessage = null;
-              callbacks = null;
-            }
-          };
-    } else {
-      Logging.loge("No action url found for action.");
-      actionListener = dismissListener;
+            };
+      } else {
+        Logging.logi("No action url found for action. Treating as dismiss.");
+        actionListener = dismissListener;
+      }
+      actionListeners.put(action, actionListener);
     }
 
     final OnGlobalLayoutListener layoutListener =
-        bindingWrapper.inflate(actionListener, dismissListener);
+        bindingWrapper.inflate(actionListeners, dismissListener);
     if (layoutListener != null) {
       bindingWrapper.getImageView().getViewTreeObserver().addOnGlobalLayoutListener(layoutListener);
     }
@@ -324,7 +346,7 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
     loadNullableImage(
         activity,
         bindingWrapper,
-        inAppMessage.getImageUrl(),
+        extractImageData(inAppMessage),
         new Callback() {
           @Override
           public void onSuccess() {
@@ -356,7 +378,8 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
                   public void onFinish() {
                     if (inAppMessage != null && callbacks != null) {
                       Logging.logi(
-                          "Impression timer onFinish for: " + inAppMessage.getCampaignId());
+                          "Impression timer onFinish for: "
+                              + inAppMessage.getCampaignMetadata().getCampaignId());
 
                       callbacks.impressionDetected();
                     }
@@ -382,16 +405,21 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
                   INTERVAL_MILLIS);
             }
 
-            windowManager.show(bindingWrapper, activity);
-
-            if (bindingWrapper.getConfig().animate()) {
-              // Animate entry
-              animator.slideIntoView(application, bindingWrapper.getRootView(), TOP);
-            }
+            activity.runOnUiThread(
+                new Runnable() {
+                  @Override
+                  public void run() {
+                    windowManager.show(bindingWrapper, activity);
+                    if (bindingWrapper.getConfig().animate()) {
+                      // Animate entry
+                      animator.slideIntoView(application, bindingWrapper.getRootView(), TOP);
+                    }
+                  }
+                });
           }
 
           @Override
-          public void onError() {
+          public void onError(Exception e) {
             Logging.loge("Image download failure ");
             if (layoutListener != null) {
               bindingWrapper
@@ -406,11 +434,57 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
         });
   }
 
+  private List<Action> extractActions(InAppMessage message) {
+    List<Action> actions = new ArrayList<>();
+    switch (message.getMessageType()) {
+      case BANNER:
+        actions.add(((BannerMessage) message).getAction());
+        break;
+      case CARD:
+        actions.add(((CardMessage) message).getPrimaryAction());
+        actions.add(((CardMessage) message).getSecondaryAction());
+        break;
+      case IMAGE_ONLY:
+        actions.add(((ImageOnlyMessage) message).getAction());
+        break;
+      case MODAL:
+        actions.add(((ModalMessage) message).getAction());
+        break;
+      default:
+        // An empty action is treated like a dismiss
+        actions.add(Action.builder().build());
+    }
+    return actions;
+  }
+
+  // TODO: Factor this into the InAppMessage API.
+  private ImageData extractImageData(InAppMessage message) {
+    // Handle getting image data for card type
+    if (message.getMessageType() == MessageType.CARD) {
+      ImageData portraitImageData = ((CardMessage) message).getPortraitImageData();
+      ImageData landscapeImageData = ((CardMessage) message).getLandscapeImageData();
+
+      // If we're in portrait try to use portrait image data, fallback to landscape
+      if (getScreenOrientation(application) == Configuration.ORIENTATION_PORTRAIT) {
+        return isValidImageData(portraitImageData) ? portraitImageData : landscapeImageData;
+      }
+      // If we're in landscape try to use landscape image data, fallback to portrait
+      return isValidImageData(landscapeImageData) ? landscapeImageData : portraitImageData;
+    }
+    // For now this is how we get all other fiam types image data.
+    return message.getImageData();
+  }
+
+  // TODO: Factor this into the InAppMessage API
+  private boolean isValidImageData(@Nullable ImageData imageData) {
+    return imageData != null && !TextUtils.isEmpty(imageData.getImageUrl());
+  }
+
   private void loadNullableImage(
-      Activity activity, BindingWrapper fiam, String imageUrl, Callback callback) {
-    if (!TextUtils.isEmpty(imageUrl)) {
+      Activity activity, BindingWrapper fiam, ImageData imageData, Callback callback) {
+    if (isValidImageData(imageData)) {
       imageLoader
-          .load(imageUrl)
+          .load(imageData.getImageUrl())
           .tag(activity.getClass())
           .placeholder(R.drawable.image_placeholder)
           .into(fiam.getImageView(), callback);
@@ -457,5 +531,36 @@ public class FirebaseInAppMessagingDisplay extends FirebaseInAppMessagingDisplay
     if (fiamListener != null) {
       fiamListener.onFiamDismiss();
     }
+  }
+
+  private void launchUriIntent(Activity activity, Uri uri) {
+    if (supportsCustomTabs(activity)) {
+      // If we can launch a chrome view, try that.
+      CustomTabsIntent customTabsIntent = new CustomTabsIntent.Builder().build();
+      Intent intent = customTabsIntent.intent;
+      intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      customTabsIntent.launchUrl(activity, uri);
+    } else {
+      // If we can't launch a chrome view try to launch anything that can handle a URL.
+      Intent browserIntent = new Intent(Intent.ACTION_VIEW, uri);
+      ResolveInfo info = activity.getPackageManager().resolveActivity(browserIntent, 0);
+      browserIntent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
+      browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      if (info != null) {
+        activity.startActivity(browserIntent);
+      } else {
+        // If the device can't resolve a url then log, but don't crash.
+        Logging.loge("Device cannot resolve intent for: " + Intent.ACTION_VIEW);
+      }
+    }
+  }
+
+  private boolean supportsCustomTabs(Activity activity) {
+    Intent customTabIntent = new Intent("android.support.customtabs.action.CustomTabsService");
+    customTabIntent.setPackage("com.android.chrome");
+    List<ResolveInfo> resolveInfos =
+        activity.getPackageManager().queryIntentServices(customTabIntent, 0);
+    return !resolveInfos.isEmpty();
   }
 }

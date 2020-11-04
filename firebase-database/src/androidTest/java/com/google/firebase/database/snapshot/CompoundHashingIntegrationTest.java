@@ -14,10 +14,11 @@
 
 package com.google.firebase.database.snapshot;
 
+import static com.google.firebase.database.core.utilities.Utilities.hardAssert;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 
-import androidx.test.runner.AndroidJUnit4;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
 import com.google.firebase.database.IntegrationTestValues;
 import com.google.firebase.database.RetryRule;
 import com.google.firebase.database.core.Path;
@@ -81,7 +82,7 @@ public class CompoundHashingIntegrationTest {
     } else if (node.isEmpty()) {
       // ignore
     } else {
-      assert node instanceof ChildrenNode;
+      hardAssert(node instanceof ChildrenNode);
       ((ChildrenNode) node)
           .forEachChild(
               new ChildrenNode.ChildVisitor() {

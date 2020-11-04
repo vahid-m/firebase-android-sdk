@@ -1,4 +1,103 @@
 # Unreleased
+- [fixed] Removed excess validation of null and NaN values in query filters.
+  This more closely aligns the SDK with the Firestore backend, which has always
+  accepted null and NaN for all operators, even though this isn't necessarily
+  useful.
+
+# (22.0.0)
+- [changed] Removed the deprecated `timestampsInSnapshotsEnabled` setting.
+  Any timestamps in Firestore documents are now returned as `Timestamps`. To
+  convert `Timestamp` classed to `java.util.Date`, use `Timestamp.toDate()`.
+
+# 21.6.1
+- [changed] Added new internal HTTP headers to the gRPC connection.
+
+# 21.6.0
+- [fixed] Removed a delay that may have prevented Firestore from immediately
+  reestablishing a network connection if a connectivity change occurred while
+  the app was in the background.
+- [fixed] Fixed an issue that may have prevented the client from connecting
+  to the backend immediately after a user signed in.
+- [feature] Cloud Firestore now supports connecting to a local emulator via
+ `FirebaseFirestore#useEmulator()`
+- [feature] Added `Query.whereNotIn()` and `Query.whereNotEqualTo()` query
+  operators. `Query.whereNotIn()` finds documents where a specified field’s
+  value is not in a specified array. `Query.whereNotEqualTo()` finds
+  documents where a specified field's value does not equal the specified value.
+  Neither query operator will match documents where the specified field is not
+  present.
+
+# 21.4.3
+- [changed] Firestore now limits the number of concurrent document lookups it
+  will perform when resolving inconsistencies in the local cache (#1374).
+
+# 21.4.2
+- [changed] Removed Guava dependency from the SDK. This change is the first
+  step in eliminating crashes caused by apps that depend on the wrong flavor of
+  Guava (#1125).
+
+# 21.4.1
+- [fixed] Fixed a performance regression introduced by the addition of
+  `Query.limitToLast(n: long)` in Firestore 23.3.1.
+- [changed] Changed the in-memory representation of Firestore documents to
+  reduce memory allocations and improve performance. Calls to 
+  `DocumentSnapshot.getData()` and `DocumentSnapshot.toObject()` will see
+  the biggest improvement.
+
+# 21.4.0
+- [feature] Firestore previously required that every document read in a
+  transaction must also be written. This requirement has been removed, and
+  you can now read a document in a transaction without writing to it.
+- [changed] Firestore now recovers more quickly once connections suffering
+  packet loss return to normal. 
+
+# 21.3.1
+- [feature] Added `Query.limitToLast(n: long)`, which returns the last `n`
+  documents as the result.
+
+# 21.3.0
+- [feature] Added `Query.whereIn()` and `Query.whereArrayContainsAny()` query
+  operators. `Query.whereIn()` finds documents where a specified field’s value
+  is IN a specified array. `Query.whereArrayContainsAny()` finds documents
+  where a specified field is an array and contains ANY element of a specified
+  array.
+- [changed] Improved the performance of repeatedly executed queries. Recently
+  executed queries should see dramatic improvements. This benefit is reduced
+  if changes accumulate while the query is inactive. Queries that use the
+  `limit()` API may not always benefit, depending on the accumulated changes.
+
+# 21.2.1
+- [fixed] Fixed an issue where Android API level 19 and earlier devices would
+  crash when unable to connect to Firestore (#904).
+- [fixed] Fixed a race condition in Documents where access to getData and
+  getField on the same document in different threads could cause a
+  NullPointerException.
+- [fixed] Fix a race condition that could cause a `NullPointerException` during
+  client initialization.
+
+# 21.2.0
+- [feature] Added an `addSnapshotsInSyncListener()` method to 
+  `FirebaseFirestore`that notifies you when all your snapshot listeners are
+  in sync with each other.
+
+# 21.1.2
+- [fixed] Fixed a crash that could occur when a large number of documents were
+  removed during garbage collection of the persistence cache.
+
+# 21.1.1
+- [fixed] Addressed a regression in 21.1.0 that caused the crash: "Cannot add
+  document to the RemoteDocumentCache with a read time of zero".
+
+# 21.1.0
+- [feature] Added a `terminate()` method to `FirebaseFirestore` which
+  terminates the instance, releasing any held resources. Once it completes, you
+  can optionally call `clearPersistence()` to wipe persisted Firestore data from
+  disk.
+- [feature] Added a `waitForPendingWrites()` method to `FirebaseFirestore`
+  which allows users to wait on a promise that resolves when all pending writes
+  are acknowledged by the Firestore backend.
+- [changed] Transactions now perform exponential backoff before retrying. This
+  means transactions on highly contended documents are more likely to succeed.
 
 # 21.0.0
 - [changed] Transactions are now more flexible. Some sequences of operations

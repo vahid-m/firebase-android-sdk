@@ -31,12 +31,13 @@ buildscript {
 apply plugin: "com.android.application"
 
 android {
-  compileSdkVersion 28
+  compileSdkVersion 29
 
   defaultConfig {
     minSdkVersion 16
     multiDexEnabled true
     testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    versionName "1.0.0"
   }
 
   buildTypes {
@@ -52,42 +53,44 @@ android {
   if (project.hasProperty("testBuildType")) {
     testBuildType project.getProperty("testBuildType")
   }
-
-  flavorDimensions "systemUnderTest"
-
-  // TODO(allisonbm92): Switch to the default flavor.
-  productFlavors {
-    combined {
-      dimension "systemUnderTest"
-      applicationId "com.google.firebase.testing.combined"
-    }
-  }
-
 }
 
 apply from: "configure.gradle"
 
 dependencies {
-  // Common
+  // Firebase
+  implementation "com.google.firebase:firebase-analytics"
+  implementation "com.google.firebase:firebase-appindexing"
+  implementation "com.google.firebase:firebase-auth"
+  implementation "com.google.firebase:firebase-common"
+  implementation "com.google.firebase:firebase-config"
+  implementation "com.google.firebase:firebase-database"
+  implementation "com.google.firebase:firebase-dynamic-links"
+  implementation "com.google.firebase:firebase-firestore"
+  implementation "com.google.firebase:firebase-functions"
+  implementation "com.google.firebase:firebase-inappmessaging"
+  // TODO(yifany): Remove version after messaging is up to date
+  implementation "com.google.firebase:firebase-messaging:21.0.0"
+  implementation "com.google.firebase:firebase-ml-vision"
+  implementation "com.google.firebase:firebase-perf"
+  implementation "com.google.firebase:firebase-storage"
+
+  // Common utilities (application side)
   implementation "androidx.test:rules:1.2.0"
   implementation "androidx.test:runner:1.2.0"
-  implementation "com.google.firebase:firebase-common"
   implementation "com.google.truth:truth:0.44"
   implementation "junit:junit:4.12"
 
-  // All
-  combinedImplementation "com.google.firebase:firebase-analytics"
-  combinedImplementation "com.google.firebase:firebase-auth"
-  combinedImplementation "com.google.firebase:firebase-database"
-  combinedImplementation "com.google.firebase:firebase-firestore"
-  combinedImplementation "com.google.firebase:firebase-functions"
-  combinedImplementation "com.google.firebase:firebase-inappmessaging"
-  combinedImplementation "com.google.firebase:firebase-config"
-  combinedImplementation "com.google.firebase:firebase-storage"
-
+  // Common utilities (instrumentation side)
   androidTestImplementation "androidx.test:core:1.2.0"
   androidTestImplementation "androidx.test:runner:1.2.0"
   androidTestImplementation "junit:junit:4.12"
+
+  // TODO(yifany): Remove the temporary fix after b/164175567
+  // https://firebase.google.com/support/release-notes/android#mlkit-self-serve-fixes
+  implementation "com.google.android.gms:play-services-vision:20.1.1"
+  implementation "com.google.android.gms:play-services-vision-common:19.1.1"
+  implementation "com.google.android.gms:play-services-vision-image-label:18.0.5"
 }
 
 clean.doLast {

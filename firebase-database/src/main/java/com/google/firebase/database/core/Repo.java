@@ -233,7 +233,8 @@ public class Repo implements PersistentConnection.Delegate {
         }
         connection.put(write.getPath().asList(), write.getOverwrite().getValue(true), onComplete);
         Node resolved =
-            ServerValues.resolveDeferredValueSnapshot(write.getOverwrite(), serverValues);
+            ServerValues.resolveDeferredValueSnapshot(
+                write.getOverwrite(), serverSyncTree, write.getPath(), serverValues);
         serverSyncTree.applyUserOverwrite(
             write.getPath(),
             write.getOverwrite(),
@@ -247,7 +248,8 @@ public class Repo implements PersistentConnection.Delegate {
         }
         connection.merge(write.getPath().asList(), write.getMerge().getValue(true), onComplete);
         CompoundWrite resolved =
-            ServerValues.resolveDeferredValueMerge(write.getMerge(), serverValues);
+            ServerValues.resolveDeferredValueMerge(
+                write.getMerge(), serverSyncTree, write.getPath(), serverValues);
         serverSyncTree.applyUserMerge(
             write.getPath(), write.getMerge(), resolved, write.getWriteId(), /*persist=*/ false);
       }
@@ -433,7 +435,9 @@ public class Repo implements PersistentConnection.Delegate {
     }
 
     Map<String, Object> serverValues = ServerValues.generateServerValues(serverClock);
-    Node newValue = ServerValues.resolveDeferredValueSnapshot(newValueUnresolved, serverValues);
+    Node existing = serverSyncTree.calcCompleteEventCache(path, new ArrayList<>());
+    Node newValue =
+        ServerValues.resolveDeferredValueSnapshot(newValueUnresolved, existing, serverValues);
 
     final long writeId = this.getNextWriteId();
     List<? extends Event> events =
@@ -480,7 +484,8 @@ public class Repo implements PersistentConnection.Delegate {
 
     // Start with our existing data and merge each child into it.
     Map<String, Object> serverValues = ServerValues.generateServerValues(serverClock);
-    CompoundWrite resolved = ServerValues.resolveDeferredValueMerge(updates, serverValues);
+    CompoundWrite resolved =
+        ServerValues.resolveDeferredValueMerge(updates, serverSyncTree, path, serverValues);
 
     final long writeId = this.getNextWriteId();
     List<? extends Event> events =
@@ -637,7 +642,7 @@ public class Repo implements PersistentConnection.Delegate {
   }
 
   public void keepSynced(QuerySpec query, boolean keep) {
-    assert query.getPath().isEmpty() || !query.getPath().getFront().equals(Constants.DOT_INFO);
+    hardAssert(query.getPath().isEmpty() || !query.getPath().getFront().equals(Constants.DOT_INFO));
 
     serverSyncTree.keepSynced(query, keep);
   }
@@ -668,16 +673,17 @@ public class Repo implements PersistentConnection.Delegate {
 
   private void runOnDisconnectEvents() {
     Map<String, Object> serverValues = ServerValues.generateServerValues(serverClock);
-    SparseSnapshotTree resolvedTree =
-        ServerValues.resolveDeferredValueTree(this.onDisconnect, serverValues);
     final List<Event> events = new ArrayList<Event>();
 
-    resolvedTree.forEachTree(
+    onDisconnect.forEachTree(
         Path.getEmptyPath(),
         new SparseSnapshotTree.SparseSnapshotTreeVisitor() {
           @Override
           public void visitTree(Path prefixPath, Node node) {
-            events.addAll(serverSyncTree.applyServerOverwrite(prefixPath, node));
+            Node existing = serverSyncTree.calcCompleteEventCache(prefixPath, new ArrayList<>());
+            Node resolvedNode =
+                ServerValues.resolveDeferredValueSnapshot(node, existing, serverValues);
+            events.addAll(serverSyncTree.applyServerOverwrite(prefixPath, resolvedNode));
             Path affectedPath = abortTransactions(prefixPath, DatabaseError.OVERRIDDEN_BY_SET);
             rerunTransactions(affectedPath);
           }
@@ -866,7 +872,9 @@ public class Repo implements PersistentConnection.Delegate {
 
       Map<String, Object> serverValues = ServerValues.generateServerValues(serverClock);
       Node newNodeUnresolved = result.getNode();
-      Node newNode = ServerValues.resolveDeferredValueSnapshot(newNodeUnresolved, serverValues);
+      Node newNode =
+          ServerValues.resolveDeferredValueSnapshot(
+              newNodeUnresolved, transaction.currentInputSnapshot, serverValues);
 
       transaction.currentOutputSnapshotRaw = newNodeUnresolved;
       transaction.currentOutputSnapshotResolved = newNode;
@@ -912,7 +920,7 @@ public class Repo implements PersistentConnection.Delegate {
     List<TransactionData> queue = node.getValue();
     if (queue != null) {
       queue = buildTransactionQueue(node);
-      assert queue.size() > 0; // Sending zero length transaction queue
+      hardAssert(queue.size() > 0); // Sending zero length transaction queue
 
       Boolean allRun = true;
       for (TransactionData transaction : queue) {
@@ -951,8 +959,9 @@ public class Repo implements PersistentConnection.Delegate {
     }
 
     for (TransactionData txn : queue) {
-      assert txn.status
-          == TransactionStatus.RUN; // sendTransactionQueue: items in queue should all be run.'
+      hardAssert(
+          txn.status
+              == TransactionStatus.RUN); // sendTransactionQueue: items in queue should all be run.'
       txn.status = TransactionStatus.SENT;
       txn.retryCount++;
       Path relativePath = Path.getRelative(path, txn.path);
@@ -1108,7 +1117,7 @@ public class Repo implements PersistentConnection.Delegate {
       DatabaseError abortReason = null;
       List<Event> events = new ArrayList<Event>();
 
-      assert relativePath != null; // rerunTransactionQueue: relativePath should not be null.
+      hardAssert(relativePath != null); // rerunTransactionQueue: relativePath should not be null.
 
       if (transaction.status == TransactionStatus.NEEDS_ABORT) {
         abortTransaction = true;
@@ -1145,7 +1154,7 @@ public class Repo implements PersistentConnection.Delegate {
 
             Node newDataNode = result.getNode();
             Node newNodeResolved =
-                ServerValues.resolveDeferredValueSnapshot(newDataNode, serverValues);
+                ServerValues.resolveDeferredValueSnapshot(newDataNode, currentNode, serverValues);
 
             transaction.currentOutputSnapshotRaw = newDataNode;
             transaction.currentOutputSnapshotResolved = newNodeResolved;
@@ -1313,14 +1322,15 @@ public class Repo implements PersistentConnection.Delegate {
         if (transaction.status == TransactionStatus.SENT_NEEDS_ABORT) {
           // No-op. Already marked
         } else if (transaction.status == TransactionStatus.SENT) {
-          assert lastSent == i - 1; // All SENT items should be at beginning of queue.
+          hardAssert(lastSent == i - 1); // All SENT items should be at beginning of queue.
           lastSent = i;
           // Mark transaction for abort when it comes back.
           transaction.status = TransactionStatus.SENT_NEEDS_ABORT;
           transaction.abortReason = abortError;
         } else {
-          assert transaction.status
-              == TransactionStatus.RUN; // Unexpected transaction status in abort
+          hardAssert(
+              transaction.status
+                  == TransactionStatus.RUN); // Unexpected transaction status in abort
           // We can abort this immediately.
           removeEventCallback(
               new ValueEventRegistration(

@@ -23,7 +23,7 @@ firebaseLibrary {
 }
 
 android {
-    compileSdkVersion 28
+    compileSdkVersion project.targetSdkVersion
     defaultConfig {
         minSdkVersion project.minSdkVersion
         multiDexEnabled true
@@ -47,6 +47,7 @@ android {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk7:$kotlinVersion"
     implementation project(':firebase-common')
+    implementation project(':firebase-components')
     implementation project(':firebase-common:ktx')
     implementation project(':firebase-firestore')
     implementation 'androidx.annotation:annotation:1.1.0'
@@ -54,7 +55,6 @@ dependencies {
     testImplementation 'org.mockito:mockito-core:2.25.0'
     testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.9.8'
     testImplementation 'com.google.android.gms:play-services-tasks:16.0.1'
-    testImplementation 'com.google.protobuf:protobuf-lite:3.0.1'
     testImplementation "org.robolectric:robolectric:$robolectricVersion"
     testImplementation 'junit:junit:4.12'
     testImplementation "com.google.truth:truth:$googleTruthVersion"

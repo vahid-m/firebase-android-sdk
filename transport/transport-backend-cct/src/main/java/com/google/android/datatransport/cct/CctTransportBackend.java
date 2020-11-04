@@ -14,58 +14,71 @@
 
 package com.google.android.datatransport.cct;
 
+import static com.google.android.datatransport.runtime.retries.Retries.retry;
+
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
+import android.telephony.TelephonyManager;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
+import com.google.android.datatransport.Encoding;
 import com.google.android.datatransport.backend.cct.BuildConfig;
-import com.google.android.datatransport.cct.proto.AndroidClientInfo;
-import com.google.android.datatransport.cct.proto.BatchedLogRequest;
-import com.google.android.datatransport.cct.proto.ClientInfo;
-import com.google.android.datatransport.cct.proto.LogEvent;
-import com.google.android.datatransport.cct.proto.LogRequest;
-import com.google.android.datatransport.cct.proto.LogResponse;
-import com.google.android.datatransport.cct.proto.NetworkConnectionInfo;
-import com.google.android.datatransport.cct.proto.NetworkConnectionInfo.MobileSubtype;
-import com.google.android.datatransport.cct.proto.NetworkConnectionInfo.NetworkType;
-import com.google.android.datatransport.cct.proto.QosTierConfiguration;
+import com.google.android.datatransport.cct.internal.AndroidClientInfo;
+import com.google.android.datatransport.cct.internal.BatchedLogRequest;
+import com.google.android.datatransport.cct.internal.ClientInfo;
+import com.google.android.datatransport.cct.internal.LogEvent;
+import com.google.android.datatransport.cct.internal.LogRequest;
+import com.google.android.datatransport.cct.internal.LogResponse;
+import com.google.android.datatransport.cct.internal.NetworkConnectionInfo;
+import com.google.android.datatransport.cct.internal.QosTier;
+import com.google.android.datatransport.runtime.EncodedPayload;
 import com.google.android.datatransport.runtime.EventInternal;
 import com.google.android.datatransport.runtime.backends.BackendRequest;
 import com.google.android.datatransport.runtime.backends.BackendResponse;
 import com.google.android.datatransport.runtime.backends.TransportBackend;
+import com.google.android.datatransport.runtime.logging.Logging;
 import com.google.android.datatransport.runtime.time.Clock;
-import com.google.protobuf.ByteString;
-import com.google.protobuf.InvalidProtocolBufferException;
-import java.io.ByteArrayOutputStream;
+import com.google.firebase.encoders.DataEncoder;
+import com.google.firebase.encoders.EncodingException;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.WritableByteChannel;
+import java.net.UnknownHostException;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 final class CctTransportBackend implements TransportBackend {
 
-  private static final Logger LOGGER = Logger.getLogger(CctTransportBackend.class.getName());
+  private static final String LOG_TAG = "CctTransportBackend";
 
   private static final int CONNECTION_TIME_OUT = 30000;
   private static final int READ_TIME_OUT = 40000;
+  private static final int INVALID_VERSION_CODE = -1;
+  private static final String ACCEPT_ENCODING_HEADER_KEY = "Accept-Encoding";
   private static final String CONTENT_ENCODING_HEADER_KEY = "Content-Encoding";
   private static final String GZIP_CONTENT_ENCODING = "gzip";
   private static final String CONTENT_TYPE_HEADER_KEY = "Content-Type";
-  private static final String PROTOBUF_CONTENT_TYPE = "application/x-protobuf";
+  static final String API_KEY_HEADER_KEY = "X-Goog-Api-Key";
+  private static final String JSON_CONTENT_TYPE = "application/json";
 
   @VisibleForTesting static final String KEY_NETWORK_TYPE = "net-type";
   @VisibleForTesting static final String KEY_MOBILE_SUBTYPE = "mobile-subtype";
@@ -78,10 +91,17 @@ final class CctTransportBackend implements TransportBackend {
   private static final String KEY_OS_BUILD = "os-uild";
   private static final String KEY_MANUFACTURER = "manufacturer";
   private static final String KEY_FINGERPRINT = "fingerprint";
+  private static final String KEY_LOCALE = "locale";
+  private static final String KEY_COUNTRY = "country";
+  private static final String KEY_MCC_MNC = "mcc_mnc";
   private static final String KEY_TIMEZONE_OFFSET = "tz-offset";
+  private static final String KEY_APPLICATION_BUILD = "application_build";
+
+  private final DataEncoder dataEncoder = BatchedLogRequest.createDataEncoder();
 
   private final ConnectivityManager connectivityManager;
-  private final URL endPoint;
+  private final Context applicationContext;
+  final URL endPoint;
   private final Clock uptimeClock;
   private final Clock wallTimeClock;
   private final int readTimeout;
@@ -95,22 +115,36 @@ final class CctTransportBackend implements TransportBackend {
   }
 
   CctTransportBackend(
-      Context applicationContext,
-      String url,
-      Clock wallTimeClock,
-      Clock uptimeClock,
-      int readTimeout) {
+      Context applicationContext, Clock wallTimeClock, Clock uptimeClock, int readTimeout) {
+    this.applicationContext = applicationContext;
     this.connectivityManager =
         (ConnectivityManager) applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE);
-    this.endPoint = parseUrlOrThrow(url);
+    this.endPoint = parseUrlOrThrow(CCTDestination.DEFAULT_END_POINT);
     this.uptimeClock = uptimeClock;
     this.wallTimeClock = wallTimeClock;
     this.readTimeout = readTimeout;
   }
 
-  CctTransportBackend(
-      Context applicationContext, String url, Clock wallTimeClock, Clock uptimeClock) {
-    this(applicationContext, url, wallTimeClock, uptimeClock, READ_TIME_OUT);
+  CctTransportBackend(Context applicationContext, Clock wallTimeClock, Clock uptimeClock) {
+    this(applicationContext, wallTimeClock, uptimeClock, READ_TIME_OUT);
+  }
+
+  private static TelephonyManager getTelephonyManager(Context context) {
+    return (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+  }
+
+  private static int getPackageVersionCode(Context context) {
+    try {
+      int packageVersionCode =
+          context
+              .getPackageManager()
+              .getPackageInfo(context.getPackageName(), /* flags= */ 0)
+              .versionCode;
+      return packageVersionCode;
+    } catch (PackageManager.NameNotFoundException e) {
+      Logging.e(LOG_TAG, "Unable to find version code for package", e);
+    }
+    return INVALID_VERSION_CODE;
   }
 
   @Override
@@ -130,13 +164,18 @@ final class CctTransportBackend implements TransportBackend {
         .addMetadata(KEY_TIMEZONE_OFFSET, getTzOffset())
         .addMetadata(KEY_NETWORK_TYPE, getNetTypeValue(networkInfo))
         .addMetadata(KEY_MOBILE_SUBTYPE, getNetSubtypeValue(networkInfo))
+        .addMetadata(KEY_COUNTRY, Locale.getDefault().getCountry())
+        .addMetadata(KEY_LOCALE, Locale.getDefault().getLanguage())
+        .addMetadata(KEY_MCC_MNC, getTelephonyManager(applicationContext).getSimOperator())
+        .addMetadata(
+            KEY_APPLICATION_BUILD, Integer.toString(getPackageVersionCode(applicationContext)))
         .build();
   }
 
   private static int getNetTypeValue(NetworkInfo networkInfo) {
     // when the device is not connected networkInfo returned by ConnectivityManger is null.
     if (networkInfo == null) {
-      return NetworkType.NONE_VALUE;
+      return NetworkConnectionInfo.NetworkType.NONE.getValue();
     }
     return networkInfo.getType();
   }
@@ -144,13 +183,13 @@ final class CctTransportBackend implements TransportBackend {
   private static int getNetSubtypeValue(NetworkInfo networkInfo) {
     // when the device is not connected networkInfo returned by ConnectivityManger is null.
     if (networkInfo == null) {
-      return MobileSubtype.UNKNOWN_MOBILE_SUBTYPE_VALUE;
+      return NetworkConnectionInfo.MobileSubtype.UNKNOWN_MOBILE_SUBTYPE.getValue();
     }
     int subtype = networkInfo.getSubtype();
     if (subtype == -1) {
-      return MobileSubtype.COMBINED_VALUE;
+      return NetworkConnectionInfo.MobileSubtype.COMBINED.getValue();
     }
-    return MobileSubtype.forNumber(subtype) != null ? subtype : 0;
+    return NetworkConnectionInfo.MobileSubtype.forNumber(subtype) != null ? subtype : 0;
   }
 
   private BatchedLogRequest getRequestBody(BackendRequest backendRequest) {
@@ -166,20 +205,19 @@ final class CctTransportBackend implements TransportBackend {
         eventInternalMap.get(key).add(eventInternal);
       }
     }
-    BatchedLogRequest.Builder batchedRequestBuilder = BatchedLogRequest.newBuilder();
+    List<LogRequest> batchedRequests = new ArrayList<>();
     for (Map.Entry<String, List<EventInternal>> entry : eventInternalMap.entrySet()) {
       EventInternal firstEvent = entry.getValue().get(0);
       LogRequest.Builder requestBuilder =
-          LogRequest.newBuilder()
-              .setLogSource(Integer.valueOf(entry.getKey()))
-              .setQosTier(QosTierConfiguration.QosTier.DEFAULT)
+          LogRequest.builder()
+              .setQosTier(QosTier.DEFAULT)
               .setRequestTimeMs(wallTimeClock.getTime())
               .setRequestUptimeMs(uptimeClock.getTime())
               .setClientInfo(
-                  ClientInfo.newBuilder()
-                      .setClientType(ClientInfo.ClientType.ANDROID)
+                  ClientInfo.builder()
+                      .setClientType(ClientInfo.ClientType.ANDROID_FIREBASE)
                       .setAndroidClientInfo(
-                          AndroidClientInfo.newBuilder()
+                          AndroidClientInfo.builder()
                               .setSdkVersion(firstEvent.getInteger(KEY_SDK_VERSION))
                               .setModel(firstEvent.get(KEY_MODEL))
                               .setHardware(firstEvent.get(KEY_HARDWARE))
@@ -188,31 +226,66 @@ final class CctTransportBackend implements TransportBackend {
                               .setOsBuild(firstEvent.get(KEY_OS_BUILD))
                               .setManufacturer(firstEvent.get(KEY_MANUFACTURER))
                               .setFingerprint(firstEvent.get(KEY_FINGERPRINT))
+                              .setCountry(firstEvent.get(KEY_COUNTRY))
+                              .setLocale(firstEvent.get(KEY_LOCALE))
+                              .setMccMnc(firstEvent.get(KEY_MCC_MNC))
+                              .setApplicationBuild(firstEvent.get(KEY_APPLICATION_BUILD))
                               .build())
                       .build());
+
+      // set log source to either its numeric value or its name.
+      try {
+        requestBuilder.setSource(Integer.parseInt(entry.getKey()));
+      } catch (NumberFormatException ex) {
+        requestBuilder.setSource(entry.getKey());
+      }
+
+      List<LogEvent> logEvents = new ArrayList<>();
       for (EventInternal eventInternal : entry.getValue()) {
-        LogEvent.Builder event =
-            LogEvent.newBuilder()
-                .setEventTimeMs(eventInternal.getEventMillis())
-                .setEventUptimeMs(eventInternal.getUptimeMillis())
-                .setTimezoneOffsetSeconds(eventInternal.getLong(KEY_TIMEZONE_OFFSET))
-                .setSourceExtension(ByteString.copyFrom(eventInternal.getPayload()))
-                .setNetworkConnectionInfo(
-                    NetworkConnectionInfo.newBuilder()
-                        .setNetworkTypeValue(eventInternal.getInteger(KEY_NETWORK_TYPE))
-                        .setMobileSubtypeValue(eventInternal.getInteger(KEY_MOBILE_SUBTYPE)));
+        EncodedPayload encodedPayload = eventInternal.getEncodedPayload();
+        Encoding encoding = encodedPayload.getEncoding();
+
+        LogEvent.Builder event;
+        if (encoding.equals(Encoding.of("proto"))) {
+          event = LogEvent.protoBuilder(encodedPayload.getBytes());
+        } else if (encoding.equals(Encoding.of("json"))) {
+          event =
+              LogEvent.jsonBuilder(new String(encodedPayload.getBytes(), Charset.forName("UTF-8")));
+        } else {
+          Logging.w(LOG_TAG, "Received event of unsupported encoding %s. Skipping...", encoding);
+          continue;
+        }
+
+        event
+            .setEventTimeMs(eventInternal.getEventMillis())
+            .setEventUptimeMs(eventInternal.getUptimeMillis())
+            .setTimezoneOffsetSeconds(eventInternal.getLong(KEY_TIMEZONE_OFFSET))
+            .setNetworkConnectionInfo(
+                NetworkConnectionInfo.builder()
+                    .setNetworkType(
+                        NetworkConnectionInfo.NetworkType.forNumber(
+                            eventInternal.getInteger(KEY_NETWORK_TYPE)))
+                    .setMobileSubtype(
+                        NetworkConnectionInfo.MobileSubtype.forNumber(
+                            eventInternal.getInteger(KEY_MOBILE_SUBTYPE)))
+                    .build());
+
         if (eventInternal.getCode() != null) {
           event.setEventCode(eventInternal.getCode());
         }
-        requestBuilder.addLogEvent(event);
+        logEvents.add(event.build());
       }
-      batchedRequestBuilder.addLogRequest(requestBuilder.build());
+      requestBuilder.setLogEvents(logEvents);
+      batchedRequests.add(requestBuilder.build());
     }
-    return batchedRequestBuilder.build();
+
+    return BatchedLogRequest.create(batchedRequests);
   }
 
-  private BackendResponse doSend(BatchedLogRequest requestBody) throws IOException {
-    HttpURLConnection connection = (HttpURLConnection) endPoint.openConnection();
+  private HttpResponse doSend(HttpRequest request) throws IOException {
+
+    Logging.d(LOG_TAG, "Making request to: %s", request.url);
+    HttpURLConnection connection = (HttpURLConnection) request.url.openConnection();
     connection.setConnectTimeout(CONNECTION_TIME_OUT);
     connection.setReadTimeout(readTimeout);
     connection.setDoOutput(true);
@@ -221,52 +294,105 @@ final class CctTransportBackend implements TransportBackend {
     connection.setRequestProperty(
         "User-Agent", String.format("datatransport/%s android/", BuildConfig.VERSION_NAME));
     connection.setRequestProperty(CONTENT_ENCODING_HEADER_KEY, GZIP_CONTENT_ENCODING);
-    connection.setRequestProperty(CONTENT_TYPE_HEADER_KEY, PROTOBUF_CONTENT_TYPE);
+    connection.setRequestProperty(CONTENT_TYPE_HEADER_KEY, JSON_CONTENT_TYPE);
+    connection.setRequestProperty(ACCEPT_ENCODING_HEADER_KEY, GZIP_CONTENT_ENCODING);
 
-    WritableByteChannel channel = Channels.newChannel(connection.getOutputStream());
-    try {
-      ByteArrayOutputStream output = new ByteArrayOutputStream();
-      GZIPOutputStream gzipOutputStream = new GZIPOutputStream(output);
-
-      try {
-        requestBody.writeTo(gzipOutputStream);
-      } finally {
-        gzipOutputStream.close();
-      }
-      channel.write(ByteBuffer.wrap(output.toByteArray()));
-      int responseCode = connection.getResponseCode();
-      LOGGER.info("Status Code: " + responseCode);
-
-      long nextRequestMillis;
-      InputStream inputStream = connection.getInputStream();
-      try {
-        try {
-          nextRequestMillis = LogResponse.parseFrom(inputStream).getNextRequestWaitMillis();
-        } catch (InvalidProtocolBufferException e) {
-          return BackendResponse.fatalError();
-        }
-      } finally {
-        inputStream.close();
-      }
-      if (responseCode == 200) {
-        return BackendResponse.ok(nextRequestMillis);
-      } else if (responseCode >= 500 || responseCode == 404) {
-        return BackendResponse.transientError();
-      } else {
-        return BackendResponse.fatalError();
-      }
-    } finally {
-      channel.close();
+    if (request.apiKey != null) {
+      connection.setRequestProperty(API_KEY_HEADER_KEY, request.apiKey);
     }
+
+    try (OutputStream conn = connection.getOutputStream();
+        OutputStream outputStream = new GZIPOutputStream(conn)) {
+      // note: it's very important to use a BufferedWriter for efficient use of resources as the
+      // JsonWriter often writes one character at a time.
+      dataEncoder.encode(
+          request.requestBody, new BufferedWriter(new OutputStreamWriter(outputStream)));
+    } catch (ConnectException | UnknownHostException e) {
+      Logging.e(LOG_TAG, "Couldn't open connection, returning with 500", e);
+      return new HttpResponse(500, null, 0);
+    } catch (EncodingException | IOException e) {
+      Logging.e(LOG_TAG, "Couldn't encode request, returning with 400", e);
+      return new HttpResponse(400, null, 0);
+    }
+
+    int responseCode = connection.getResponseCode();
+    Logging.i(LOG_TAG, "Status Code: " + responseCode);
+    Logging.i(LOG_TAG, "Content-Type: " + connection.getHeaderField("Content-Type"));
+    Logging.i(LOG_TAG, "Content-Encoding: " + connection.getHeaderField("Content-Encoding"));
+
+    if (responseCode == 302 || responseCode == 301 || responseCode == 307) {
+      String redirect = connection.getHeaderField("Location");
+      return new HttpResponse(responseCode, new URL(redirect), 0);
+    }
+    if (responseCode != 200) {
+      return new HttpResponse(responseCode, null, 0);
+    }
+
+    try (InputStream connStream = connection.getInputStream();
+        InputStream inputStream =
+            maybeUnGzip(connStream, connection.getHeaderField(CONTENT_ENCODING_HEADER_KEY))) {
+      long nextRequestMillis =
+          LogResponse.fromJson(new BufferedReader(new InputStreamReader(inputStream)))
+              .getNextRequestWaitMillis();
+      return new HttpResponse(responseCode, null, nextRequestMillis);
+    }
+  }
+
+  private static InputStream maybeUnGzip(InputStream input, String contentEncoding)
+      throws IOException {
+    if (GZIP_CONTENT_ENCODING.equals(contentEncoding)) {
+      return new GZIPInputStream(input);
+    }
+    return input;
   }
 
   @Override
   public BackendResponse send(BackendRequest request) {
     BatchedLogRequest requestBody = getRequestBody(request);
+    // CCT backend supports 2 different endpoints
+    // We route to CCT backend if extras are null and to LegacyFlg otherwise.
+    // This (anti-) pattern should not be required for other backends
+    String apiKey = null;
+    URL actualEndPoint = endPoint;
+    if (request.getExtras() != null) {
+      try {
+        CCTDestination destination = CCTDestination.fromByteArray(request.getExtras());
+        if (destination.getAPIKey() != null) {
+          apiKey = destination.getAPIKey();
+        }
+        if (destination.getEndPoint() != null) {
+          actualEndPoint = parseUrlOrThrow(destination.getEndPoint());
+        }
+      } catch (IllegalArgumentException e) {
+        return BackendResponse.fatalError();
+      }
+    }
+
     try {
-      return doSend(requestBody);
+      HttpResponse response =
+          retry(
+              5,
+              new HttpRequest(actualEndPoint, requestBody, apiKey),
+              this::doSend,
+              (req, resp) -> {
+                if (resp.redirectUrl != null) {
+                  // retry with different url
+                  Logging.d(LOG_TAG, "Following redirect to: %s", resp.redirectUrl);
+                  return req.withUrl(resp.redirectUrl);
+                }
+                // don't retry
+                return null;
+              });
+
+      if (response.code == 200) {
+        return BackendResponse.ok(response.nextRequestMillis);
+      } else if (response.code >= 500 || response.code == 404) {
+        return BackendResponse.transientError();
+      } else {
+        return BackendResponse.fatalError();
+      }
     } catch (IOException e) {
-      LOGGER.log(Level.SEVERE, "Could not make request to the backend", e);
+      Logging.e(LOG_TAG, "Could not make request to the backend", e);
       return BackendResponse.transientError();
     }
   }
@@ -276,5 +402,33 @@ final class CctTransportBackend implements TransportBackend {
     Calendar.getInstance();
     TimeZone tz = TimeZone.getDefault();
     return tz.getOffset(Calendar.getInstance().getTimeInMillis()) / 1000;
+  }
+
+  static final class HttpResponse {
+    final int code;
+    @Nullable final URL redirectUrl;
+    final long nextRequestMillis;
+
+    HttpResponse(int code, @Nullable URL redirectUrl, long nextRequestMillis) {
+      this.code = code;
+      this.redirectUrl = redirectUrl;
+      this.nextRequestMillis = nextRequestMillis;
+    }
+  }
+
+  static final class HttpRequest {
+    final URL url;
+    final BatchedLogRequest requestBody;
+    @Nullable final String apiKey;
+
+    HttpRequest(URL url, BatchedLogRequest requestBody, @Nullable String apiKey) {
+      this.url = url;
+      this.requestBody = requestBody;
+      this.apiKey = apiKey;
+    }
+
+    HttpRequest withUrl(URL newUrl) {
+      return new HttpRequest(newUrl, requestBody, apiKey);
+    }
   }
 }

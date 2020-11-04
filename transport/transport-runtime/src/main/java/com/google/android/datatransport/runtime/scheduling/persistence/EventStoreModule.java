@@ -18,9 +18,11 @@ import com.google.android.datatransport.runtime.synchronization.SynchronizationG
 import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
+import javax.inject.Named;
 
 @Module
 public abstract class EventStoreModule {
+
   @Provides
   static EventStoreConfig storeConfig() {
     return EventStoreConfig.DEFAULT;
@@ -31,4 +33,16 @@ public abstract class EventStoreModule {
 
   @Binds
   abstract SynchronizationGuard synchronizationGuard(SQLiteEventStore store);
+
+  @Provides
+  @Named("SCHEMA_VERSION")
+  static int schemaVersion() {
+    return SchemaManager.SCHEMA_VERSION;
+  }
+
+  @Provides
+  @Named("SQLITE_DB_NAME")
+  static String dbName() {
+    return SchemaManager.DB_NAME;
+  }
 }

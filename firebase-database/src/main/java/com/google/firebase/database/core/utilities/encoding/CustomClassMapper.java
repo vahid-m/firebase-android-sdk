@@ -39,6 +39,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -177,7 +178,24 @@ public class CustomClassMapper {
     } else if (type instanceof Class) {
       return deserializeToClass(o, (Class<T>) type);
     } else if (type instanceof WildcardType) {
-      throw new DatabaseException("Generic wildcard types are not supported");
+      Type[] lowerBounds = ((WildcardType) type).getLowerBounds();
+      if (lowerBounds.length > 0) {
+        throw new DatabaseException("Generic lower-bounded wildcard types are not supported");
+      }
+
+      // Upper bounded wildcards are of the form <? extends Foo>. Multiple upper bounds are allowed
+      // but if any of the bounds are of class type, that bound must come first in this array. Note
+      // that this array always has at least one element, since the unbounded wildcard <?> always
+      // has at least an upper bound of Object.
+      Type[] upperBounds = ((WildcardType) type).getUpperBounds();
+      hardAssert(upperBounds.length > 0, "Wildcard type " + type + " is not upper bounded.");
+      return deserializeToType(o, upperBounds[0]);
+    } else if (type instanceof TypeVariable) {
+      // As above, TypeVariables always have at least one upper bound of Object.
+      Type[] upperBounds = ((TypeVariable<?>) type).getBounds();
+      hardAssert(upperBounds.length > 0, "Wildcard type " + type + " is not upper bounded.");
+      return deserializeToType(o, upperBounds[0]);
+
     } else if (type instanceof GenericArrayType) {
       throw new DatabaseException(
           "Generic Arrays are not supported, please use Lists " + "instead");
@@ -481,7 +499,7 @@ public class CustomClassMapper {
         for (Method method : currentClass.getDeclaredMethods()) {
           if (shouldIncludeSetter(method)) {
             String propertyName = propertyName(method);
-            String existingPropertyName = properties.get(propertyName.toLowerCase());
+            String existingPropertyName = properties.get(propertyName.toLowerCase(Locale.US));
             if (existingPropertyName != null) {
               if (!existingPropertyName.equals(propertyName)) {
                 throw new DatabaseException(
@@ -514,7 +532,7 @@ public class CustomClassMapper {
 
           // Case sensitivity is checked at deserialization time
           // Fields are only added if they don't exist on a subclass
-          if (properties.containsKey(propertyName.toLowerCase())
+          if (properties.containsKey(propertyName.toLowerCase(Locale.US))
               && !fields.containsKey(propertyName)) {
             field.setAccessible(true);
             fields.put(propertyName, field);
@@ -532,12 +550,12 @@ public class CustomClassMapper {
     }
 
     private void addProperty(String property) {
-      String oldValue = this.properties.put(property.toLowerCase(), property);
+      String oldValue = this.properties.put(property.toLowerCase(Locale.US), property);
       if (oldValue != null && !property.equals(oldValue)) {
         throw new DatabaseException(
             "Found two getters or fields with conflicting case "
                 + "sensitivity for property: "
-                + property.toLowerCase());
+                + property.toLowerCase(Locale.US));
       }
     }
 
@@ -596,7 +614,7 @@ public class CustomClassMapper {
                   + " found "
                   + "on class "
                   + this.clazz.getName();
-          if (this.properties.containsKey(propertyName.toLowerCase())) {
+          if (this.properties.containsKey(propertyName.toLowerCase(Locale.US))) {
             message += " (fields/setters are case sensitive!)";
           }
           if (this.throwOnUnknownProperties) {

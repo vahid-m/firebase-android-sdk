@@ -29,13 +29,13 @@ import android.database.sqlite.SQLiteStatement;
 import android.database.sqlite.SQLiteTransactionListener;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import com.google.common.base.Function;
 import com.google.firebase.firestore.FirebaseFirestoreException;
 import com.google.firebase.firestore.FirebaseFirestoreException.Code;
 import com.google.firebase.firestore.auth.User;
 import com.google.firebase.firestore.model.DatabaseId;
 import com.google.firebase.firestore.util.Consumer;
 import com.google.firebase.firestore.util.FileUtil;
+import com.google.firebase.firestore.util.Function;
 import com.google.firebase.firestore.util.Logger;
 import com.google.firebase.firestore.util.Supplier;
 import java.io.File;
@@ -77,10 +77,9 @@ public final class SQLitePersistence extends Persistence {
     }
   }
 
-  private final OpenHelper opener;
+  private final SQLiteOpenHelper opener;
   private final LocalSerializer serializer;
-  private final StatsCollector statsCollector;
-  private final SQLiteQueryCache queryCache;
+  private final SQLiteTargetCache targetCache;
   private final SQLiteIndexManager indexManager;
   private final SQLiteRemoteDocumentCache remoteDocumentCache;
   private final SQLiteLruReferenceDelegate referenceDelegate;
@@ -110,28 +109,18 @@ public final class SQLitePersistence extends Persistence {
       LocalSerializer serializer,
       LruGarbageCollector.Params params) {
     this(
-        context,
-        persistenceKey,
-        databaseId,
         serializer,
-        StatsCollector.NO_OP_STATS_COLLECTOR,
-        params);
+        params,
+        new OpenHelper(context, serializer, databaseName(persistenceKey, databaseId)));
   }
 
   public SQLitePersistence(
-      Context context,
-      String persistenceKey,
-      DatabaseId databaseId,
-      LocalSerializer serializer,
-      StatsCollector statsCollector,
-      LruGarbageCollector.Params params) {
-    String databaseName = databaseName(persistenceKey, databaseId);
-    this.opener = new OpenHelper(context, databaseName);
+      LocalSerializer serializer, LruGarbageCollector.Params params, SQLiteOpenHelper openHelper) {
+    this.opener = openHelper;
     this.serializer = serializer;
-    this.statsCollector = statsCollector;
-    this.queryCache = new SQLiteQueryCache(this, this.serializer);
+    this.targetCache = new SQLiteTargetCache(this, this.serializer);
     this.indexManager = new SQLiteIndexManager(this);
-    this.remoteDocumentCache = new SQLiteRemoteDocumentCache(this, this.serializer, statsCollector);
+    this.remoteDocumentCache = new SQLiteRemoteDocumentCache(this, this.serializer);
     this.referenceDelegate = new SQLiteLruReferenceDelegate(this, params);
   }
 
@@ -153,8 +142,8 @@ public final class SQLitePersistence extends Persistence {
               + " is, call setPersistenceEnabled(true)) in one of them.",
           e);
     }
-    queryCache.start();
-    referenceDelegate.start(queryCache.getHighestListenSequenceNumber());
+    targetCache.start();
+    referenceDelegate.start(targetCache.getHighestListenSequenceNumber());
   }
 
   @Override
@@ -177,12 +166,12 @@ public final class SQLitePersistence extends Persistence {
 
   @Override
   MutationQueue getMutationQueue(User user) {
-    return new SQLiteMutationQueue(this, serializer, statsCollector, user);
+    return new SQLiteMutationQueue(this, serializer, user);
   }
 
   @Override
-  SQLiteQueryCache getQueryCache() {
-    return queryCache;
+  SQLiteTargetCache getTargetCache() {
+    return targetCache;
   }
 
   @Override
@@ -288,10 +277,12 @@ public final class SQLitePersistence extends Persistence {
    */
   private static class OpenHelper extends SQLiteOpenHelper {
 
+    private final LocalSerializer serializer;
     private boolean configured;
 
-    OpenHelper(Context context, String databaseName) {
+    OpenHelper(Context context, LocalSerializer serializer, String databaseName) {
       super(context, databaseName, null, SQLiteSchema.VERSION);
+      this.serializer = serializer;
     }
 
     @Override
@@ -317,13 +308,13 @@ public final class SQLitePersistence extends Persistence {
     @Override
     public void onCreate(SQLiteDatabase db) {
       ensureConfigured(db);
-      new SQLiteSchema(db).runMigrations(0);
+      new SQLiteSchema(db, serializer).runMigrations(0);
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
       ensureConfigured(db);
-      new SQLiteSchema(db).runMigrations(oldVersion);
+      new SQLiteSchema(db, serializer).runMigrations(oldVersion);
     }
 
     @Override
