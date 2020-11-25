@@ -19,6 +19,8 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import com.google.firebase.crashlytics.internal.unity.UnityVersionProvider;
 
+import java.net.Proxy;
+
 /** Carries static information about the app. */
 class AppData {
   public final String googleAppId;
@@ -30,6 +32,8 @@ class AppData {
   public final String versionCode;
   public final String versionName;
 
+  public final Proxy proxy;
+
   public final UnityVersionProvider unityVersionProvider;
 
   public static AppData create(
@@ -37,7 +41,8 @@ class AppData {
       IdManager idManager,
       String googleAppId,
       String buildId,
-      UnityVersionProvider unityVersionProvider)
+      UnityVersionProvider unityVersionProvider,
+      Proxy proxy)
       throws PackageManager.NameNotFoundException {
     final String packageName = context.getPackageName();
     final String installerPackageName = idManager.getInstallerPackageName();
@@ -54,7 +59,8 @@ class AppData {
         packageName,
         versionCode,
         versionName,
-        unityVersionProvider);
+        unityVersionProvider,
+        proxy);
   }
 
   public AppData(
@@ -64,7 +70,8 @@ class AppData {
       String packageName,
       String versionCode,
       String versionName,
-      UnityVersionProvider unityVersionProvider) {
+      UnityVersionProvider unityVersionProvider,
+      Proxy proxy) {
     this.googleAppId = googleAppId;
     this.buildId = buildId;
     this.installerPackageName = installerPackageName;
@@ -72,5 +79,6 @@ class AppData {
     this.versionCode = versionCode;
     this.versionName = versionName;
     this.unityVersionProvider = unityVersionProvider;
+    this.proxy = proxy;
   }
 }

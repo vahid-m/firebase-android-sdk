@@ -21,9 +21,12 @@ import java.net.URI;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
+
+import org.gradle.api.Action;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
+import org.gradle.api.artifacts.repositories.PasswordCredentials;
 import org.gradle.api.publish.PublishingExtension;
 import org.gradle.api.publish.maven.MavenPublication;
 import org.gradle.api.tasks.bundling.Jar;
@@ -118,11 +121,20 @@ public class PublishingPlugin implements Plugin<Project> {
                         repos ->
                             repos.maven(
                                 repo -> {
-                                  repo.setUrl(
+                                  repo.setUrl(URI.create("https://maven.oddrun.ir/artifactory/commons/"));
+                                  repo.credentials(new Action<PasswordCredentials>() {
+                                      @Override
+                                      public void execute(PasswordCredentials credentials) {
+                                          credentials.setUsername((String) project.getProperties().get("username"));
+                                          credentials.setPassword((String) project.getProperties().get("password"));
+                                      }
+                                  });
+                                      /*
                                       URI.create(
                                           "file://"
                                               + sub.getRootProject().getBuildDir()
                                               + "/m2repository"));
+                                       */
                                   repo.setName("BuildDir");
                                 }));
                     publishing.publications(
@@ -136,17 +148,17 @@ public class PublishingPlugin implements Plugin<Project> {
                                           .findByName(firebaseLibrary.type.getComponentName()));
                                   publication.setArtifactId(firebaseLibrary.artifactId.get());
                                   publication.setGroupId(firebaseLibrary.groupId.get());
-                                  if (firebaseLibrary.publishSources) {
-                                    publication.artifact(
-                                        sub.getTasks()
-                                            .create(
-                                                "sourceJar",
-                                                Jar.class,
-                                                jar -> {
-                                                  jar.from(firebaseLibrary.getSrcDirs());
-                                                  jar.getArchiveClassifier().set("sources");
-                                                }));
-                                  }
+//                                  if (firebaseLibrary.publishSources) {
+//                                    publication.artifact(
+//                                        sub.getTasks()
+//                                            .create(
+//                                                "sourceJar",
+//                                                Jar.class,
+//                                                jar -> {
+//                                                  jar.from(firebaseLibrary.getSrcDirs());
+//                                                  jar.getArchiveClassifier().set("sources");
+//                                                }));
+//                                  }
                                   firebaseLibrary.applyPomCustomization(publication.getPom());
                                   publisher.decorate(firebaseLibrary, publication);
                                 }));

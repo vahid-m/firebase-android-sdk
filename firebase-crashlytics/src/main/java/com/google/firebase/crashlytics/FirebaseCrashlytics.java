@@ -37,6 +37,7 @@ import com.google.firebase.crashlytics.internal.common.CrashlyticsCore;
 import com.google.firebase.crashlytics.internal.common.DataCollectionArbiter;
 import com.google.firebase.crashlytics.internal.common.ExecutorUtils;
 import com.google.firebase.crashlytics.internal.common.IdManager;
+import com.google.firebase.crashlytics.internal.network.OkHttpProvider;
 import com.google.firebase.crashlytics.internal.settings.SettingsController;
 import com.google.firebase.installations.FirebaseInstallationsApi;
 import java.util.concurrent.Callable;
@@ -64,6 +65,8 @@ public class FirebaseCrashlytics {
       @Nullable CrashlyticsNativeComponent nativeComponent,
       @Nullable AnalyticsConnector analyticsConnector) {
     Context context = app.getApplicationContext();
+    OkHttpProvider.init(app.getOptions());
+
     // Set up the IdManager.
     final String appIdentifier = context.getPackageName();
     final IdManager idManager = new IdManager(context, appIdentifier, firebaseInstallationsApi);

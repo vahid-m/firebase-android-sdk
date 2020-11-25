@@ -26,6 +26,8 @@ import com.google.android.gms.common.internal.Objects;
 import com.google.android.gms.common.internal.Preconditions;
 import com.google.android.gms.common.internal.StringResourceValueReader;
 
+import java.net.Proxy;
+
 /** Configurable Firebase options. */
 public final class FirebaseOptions {
 
@@ -46,6 +48,7 @@ public final class FirebaseOptions {
   private final String gcmSenderId;
   private final String storageBucket;
   private final String projectId;
+  private final Proxy proxy;
 
   /** Builder for constructing FirebaseOptions. */
   public static final class Builder {
@@ -56,6 +59,7 @@ public final class FirebaseOptions {
     private String gcmSenderId;
     private String storageBucket;
     private String projectId;
+    private Proxy proxy;
 
     /** Constructs an empty builder. */
     public Builder() {}
@@ -74,6 +78,7 @@ public final class FirebaseOptions {
       gcmSenderId = options.gcmSenderId;
       storageBucket = options.storageBucket;
       projectId = options.projectId;
+      proxy = options.proxy;
     }
 
     @NonNull
@@ -121,10 +126,14 @@ public final class FirebaseOptions {
       return this;
     }
 
+    public void setProxy(@Nullable Proxy proxy) {
+      this.proxy = proxy;
+    }
+
     @NonNull
     public FirebaseOptions build() {
       return new FirebaseOptions(
-          applicationId, apiKey, databaseUrl, gaTrackingId, gcmSenderId, storageBucket, projectId);
+          applicationId, apiKey, databaseUrl, gaTrackingId, gcmSenderId, storageBucket, projectId, proxy);
     }
   }
 
@@ -135,7 +144,8 @@ public final class FirebaseOptions {
       @Nullable String gaTrackingId,
       @Nullable String gcmSenderId,
       @Nullable String storageBucket,
-      @Nullable String projectId) {
+      @Nullable String projectId,
+      @Nullable Proxy proxy) {
     Preconditions.checkState(!isEmptyOrWhitespace(applicationId), "ApplicationId must be set.");
     this.applicationId = applicationId;
     this.apiKey = apiKey;
@@ -144,6 +154,7 @@ public final class FirebaseOptions {
     this.gcmSenderId = gcmSenderId;
     this.storageBucket = storageBucket;
     this.projectId = projectId;
+    this.proxy = proxy;
   }
 
   /**
@@ -165,7 +176,8 @@ public final class FirebaseOptions {
         reader.getString(GA_TRACKING_ID_RESOURCE_NAME),
         reader.getString(GCM_SENDER_ID_RESOURCE_NAME),
         reader.getString(STORAGE_BUCKET_RESOURCE_NAME),
-        reader.getString(PROJECT_ID_RESOURCE_NAME));
+        reader.getString(PROJECT_ID_RESOURCE_NAME),
+        null);
   }
 
   /**
@@ -222,6 +234,10 @@ public final class FirebaseOptions {
     return projectId;
   }
 
+  public Proxy getProxy() {
+    return proxy;
+  }
+
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof FirebaseOptions)) {
@@ -234,7 +250,8 @@ public final class FirebaseOptions {
         && Objects.equal(gaTrackingId, other.gaTrackingId)
         && Objects.equal(gcmSenderId, other.gcmSenderId)
         && Objects.equal(storageBucket, other.storageBucket)
-        && Objects.equal(projectId, other.projectId);
+        && Objects.equal(projectId, other.projectId)
+        && Objects.equal(proxy, other.proxy);
   }
 
   @Override

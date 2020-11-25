@@ -220,7 +220,7 @@ public class RemoteConfigComponent {
         apiKey,
         namespace,
             /* connectTimeoutInSeconds= */ metadataClient.getFetchTimeoutInSeconds(),
-            /* readTimeoutInSeconds= */ metadataClient.getFetchTimeoutInSeconds()),
+            /* readTimeoutInSeconds= */ metadataClient.getFetchTimeoutInSeconds(),
         metadataClient.getProxyType(),
         metadataClient.getProxyHost(),
         metadataClient.getProxyPort());

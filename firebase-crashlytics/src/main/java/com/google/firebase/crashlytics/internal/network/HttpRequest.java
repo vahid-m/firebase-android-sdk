@@ -18,7 +18,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import okhttp3.CacheControl;
 import okhttp3.Call;
 import okhttp3.HttpUrl;
@@ -29,8 +28,7 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 
 public class HttpRequest {
-  private static final OkHttpClient CLIENT;
-  private static final int DEFAULT_TIMEOUT_MS = 10 * 1000; // 10 seconds in millis
+  private static final OkHttpClient CLIENT = OkHttpProvider.getInstance();
 
   private final HttpMethod method;
   private final String url;
@@ -38,14 +36,6 @@ public class HttpRequest {
   private final Map<String, String> headers;
 
   private MultipartBody.Builder bodyBuilder = null;
-
-  static {
-    CLIENT =
-        new OkHttpClient()
-            .newBuilder()
-            .callTimeout(DEFAULT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            .build();
-  }
 
   public HttpRequest(HttpMethod method, String url, Map<String, String> queryParams) {
     this.method = method;
