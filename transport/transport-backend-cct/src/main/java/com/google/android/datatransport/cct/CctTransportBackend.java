@@ -53,6 +53,7 @@ import java.io.OutputStreamWriter;
 import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.Proxy;
 import java.net.URL;
 import java.net.UnknownHostException;
 import java.nio.charset.Charset;
@@ -285,7 +286,12 @@ final class CctTransportBackend implements TransportBackend {
   private HttpResponse doSend(HttpRequest request) throws IOException {
 
     Logging.d(LOG_TAG, "Making request to: %s", request.url);
-    HttpURLConnection connection = (HttpURLConnection) request.url.openConnection();
+    final HttpURLConnection connection;
+    if (request.proxy != null) {
+      connection = (HttpURLConnection) request.url.openConnection(request.proxy);
+    } else {
+      connection = (HttpURLConnection) request.url.openConnection();
+    }
     connection.setConnectTimeout(CONNECTION_TIME_OUT);
     connection.setReadTimeout(readTimeout);
     connection.setDoOutput(true);
@@ -354,6 +360,7 @@ final class CctTransportBackend implements TransportBackend {
     // This (anti-) pattern should not be required for other backends
     String apiKey = null;
     URL actualEndPoint = endPoint;
+    Proxy proxy = null;
     if (request.getExtras() != null) {
       try {
         CCTDestination destination = CCTDestination.fromByteArray(request.getExtras());
@@ -362,6 +369,9 @@ final class CctTransportBackend implements TransportBackend {
         }
         if (destination.getEndPoint() != null) {
           actualEndPoint = parseUrlOrThrow(destination.getEndPoint());
+        }
+        if (destination.getProxy() != null) {
+          proxy = destination.getProxy();
         }
       } catch (IllegalArgumentException e) {
         return BackendResponse.fatalError();
@@ -372,7 +382,7 @@ final class CctTransportBackend implements TransportBackend {
       HttpResponse response =
           retry(
               5,
-              new HttpRequest(actualEndPoint, requestBody, apiKey),
+              new HttpRequest(actualEndPoint, requestBody, apiKey, proxy),
               this::doSend,
               (req, resp) -> {
                 if (resp.redirectUrl != null) {
@@ -420,15 +430,21 @@ final class CctTransportBackend implements TransportBackend {
     final URL url;
     final BatchedLogRequest requestBody;
     @Nullable final String apiKey;
+    @Nullable final Proxy proxy;
 
     HttpRequest(URL url, BatchedLogRequest requestBody, @Nullable String apiKey) {
+      this(url, requestBody, apiKey, null);
+    }
+
+    HttpRequest(URL url, BatchedLogRequest requestBody, @Nullable String apiKey, @Nullable Proxy proxy) {
       this.url = url;
       this.requestBody = requestBody;
       this.apiKey = apiKey;
+      this.proxy = proxy;
     }
 
     HttpRequest withUrl(URL newUrl) {
-      return new HttpRequest(newUrl, requestBody, apiKey);
+      return new HttpRequest(newUrl, requestBody, apiKey, proxy);
     }
   }
 }

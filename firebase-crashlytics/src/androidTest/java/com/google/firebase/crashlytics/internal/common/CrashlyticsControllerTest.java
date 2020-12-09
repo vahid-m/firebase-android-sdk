@@ -219,7 +219,8 @@ public class CrashlyticsControllerTest extends CrashlyticsTestCase {
               "packageName",
               "versionCode",
               "versionName",
-              unityVersionProvider);
+              unityVersionProvider,
+              null);
 
       final CrashlyticsController controller =
           new CrashlyticsController(

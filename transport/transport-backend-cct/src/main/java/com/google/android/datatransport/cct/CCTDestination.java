@@ -18,6 +18,9 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import com.google.android.datatransport.Encoding;
 import com.google.android.datatransport.runtime.EncodedDestination;
+
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Collections;
@@ -50,10 +53,16 @@ public final class CCTDestination implements EncodedDestination {
 
   @NonNull private final String endPoint;
   @Nullable private final String apiKey;
+  @Nullable private final Proxy proxy;
 
   public CCTDestination(@NonNull String endPoint, @Nullable String apiKey) {
+    this(endPoint, apiKey, null);
+  }
+
+  public CCTDestination(@NonNull String endPoint, @Nullable String apiKey, @Nullable Proxy proxy) {
     this.endPoint = endPoint;
     this.apiKey = apiKey;
+    this.proxy = proxy;
   }
 
   @NonNull
@@ -83,6 +92,11 @@ public final class CCTDestination implements EncodedDestination {
     return endPoint;
   }
 
+  @Nullable
+  public Proxy getProxy() {
+    return proxy;
+  }
+
   /**
    * Encodes the current object as a byte[].
    *
@@ -95,9 +109,16 @@ public final class CCTDestination implements EncodedDestination {
       return null;
     }
     String buffer =
-        String.format(
-            "%s%s%s%s",
-            EXTRAS_VERSION_MARKER, endPoint, EXTRAS_DELIMITER, apiKey == null ? "" : apiKey);
+        String.format("%s%s%s%s%s%s%s%s",
+            EXTRAS_VERSION_MARKER,
+                endPoint,
+                EXTRAS_DELIMITER,
+                apiKey == null ? "" : apiKey,
+                EXTRAS_DELIMITER,
+                proxy == null ? "" : proxy.type().ordinal(),
+                EXTRAS_DELIMITER,
+                proxy == null ? "" : proxy.address().toString());
+
     return buffer.getBytes(Charset.forName("UTF-8"));
   }
 
@@ -114,8 +135,8 @@ public final class CCTDestination implements EncodedDestination {
       throw new IllegalArgumentException("Version marker missing from extras");
     }
     buffer = buffer.substring(EXTRAS_VERSION_MARKER.length());
-    String[] fields = buffer.split(Pattern.quote(EXTRAS_DELIMITER), 2);
-    if (fields.length != 2) {
+    String[] fields = buffer.split(Pattern.quote(EXTRAS_DELIMITER), 4);
+    if (fields.length != 4) {
       throw new IllegalArgumentException("Extra is not a valid encoded LegacyFlgDestination");
     }
     String endPoint = fields[0];
@@ -123,7 +144,19 @@ public final class CCTDestination implements EncodedDestination {
       throw new IllegalArgumentException("Missing endpoint in CCTDestination extras");
     }
     String apiKey = fields[1];
-    return new CCTDestination(endPoint, apiKey.isEmpty() ? null : apiKey);
+    String proxyTypeStr = fields[2];
+    String proxyAddress = fields[3];
+    Proxy proxy = null;
+    try {
+      if (!proxyTypeStr.isEmpty() && !proxyAddress.isEmpty()) {
+        Proxy.Type type = Proxy.Type.values()[Integer.parseInt(proxyTypeStr)];
+        String[] address = proxyAddress.split(":");
+        proxy = new Proxy(type, InetSocketAddress.createUnresolved(address[0], Integer.parseInt(address[1])));
+      }
+    } catch (Throwable t) {
+      // ignored
+    }
+    return new CCTDestination(endPoint, apiKey.isEmpty() ? null : apiKey, proxy);
   }
 
   @NonNull

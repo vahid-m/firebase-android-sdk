@@ -136,7 +136,7 @@ public class CrashlyticsCore {
 
       final UnityVersionProvider unityVersionProvider = new ResourceUnityVersionProvider(context);
       final AppData appData =
-          AppData.create(context, idManager, googleAppId, mappingFileId, unityVersionProvider);
+          AppData.create(context, idManager, googleAppId, mappingFileId, unityVersionProvider, app.getOptions().getProxy());
 
       Logger.getLogger().d("Installer package name is: " + appData.installerPackageName);
 

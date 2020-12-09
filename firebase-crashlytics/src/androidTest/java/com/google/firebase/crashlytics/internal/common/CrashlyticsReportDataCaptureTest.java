@@ -59,7 +59,7 @@ public class CrashlyticsReportDataCaptureTest {
         new IdManager(context, context.getPackageName(), installationsApiMock);
     final UnityVersionProvider unityVersionProvider = new ResourceUnityVersionProvider(context);
     final AppData appData =
-        AppData.create(context, idManager, "googleAppId", "buildId", unityVersionProvider);
+        AppData.create(context, idManager, "googleAppId", "buildId", unityVersionProvider, null);
     dataCapture =
         new CrashlyticsReportDataCapture(context, idManager, appData, stackTraceTrimmingStrategy);
     timestamp = System.currentTimeMillis();
